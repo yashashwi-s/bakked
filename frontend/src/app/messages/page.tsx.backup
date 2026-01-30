@@ -1,0 +1,902 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Navbar } from '@/components/layout'
+import { Button, Input, Textarea, Modal, Toggle } from '@/components/ui'
+import { isAuthenticated, formatDate, censorPhone, replacePlaceholders, getTestContact, saveTestContact } from '@/lib/utils'
+import { getLocalTemplates, createLocalTemplate, deleteLocalTemplate, getGroupMembers, getContacts, sendTestMessage, sendBulkCampaign, uploadMedia } from '@/lib/api'
+import type { Template, Contact, GroupType, TestContact } from '@/types'
+import { GROUPS, RECIPIENT_GROUPS, PLACEHOLDERS, MAX_IMAGES } from '@/lib/constants'
+import { useMessagesStore } from '@/stores/messages'
+import { Trash2, Send, FlaskConical, Save, X, Settings, Search, ExternalLink } from 'lucide-react'
+
+export default function MessagesPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+
+  // Store state
+  const {
+    selectedGroup,
+    setSelectedGroup,
+    selectedRecipientGroup,
+    setSelectedRecipientGroup,
+    templates,
+    setTemplates,
+    templatesLoading,
+    setTemplatesLoading,
+    recipients,
+    setRecipients,
+    recipientsLoading,
+    setRecipientsLoading,
+    excludedIds,
+    toggleExcluded,
+    clearExcluded,
+    draft,
+    setDraft,
+    resetDraft,
+    testContact,
+    setTestContact,
+    addMediaUrl,
+    removeMediaUrl,
+    showRecipientsModal,
+    setShowRecipientsModal,
+    showTemplateModal,
+    setShowTemplateModal,
+    showTestContactModal,
+    setShowTestContactModal,
+    showSendConfirmModal,
+    setShowSendConfirmModal,
+    loadTemplateIntoDraft,
+  } = useMessagesStore()
+
+  // Local state
+  const [templateName, setTemplateName] = useState('')
+  const [recipientSearch, setRecipientSearch] = useState('')
+  const [sending, setSending] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.replace('/')
+      return
+    }
+    
+    // Load test contact from localStorage
+    const stored = getTestContact()
+    if (stored) {
+      setTestContact(stored)
+    }
+    
+    setLoading(false)
+  }, [router, setTestContact])
+
+  // Load templates when group changes
+  useEffect(() => {
+    if (selectedGroup) {
+      loadTemplates(selectedGroup)
+    }
+  }, [selectedGroup])
+
+  // Load recipients when recipient group changes
+  useEffect(() => {
+    if (selectedRecipientGroup) {
+      loadRecipients(selectedRecipientGroup)
+    }
+  }, [selectedRecipientGroup])
+
+  const loadTemplates = async (group: GroupType) => {
+    setTemplatesLoading(true)
+    try {
+      const data = await getLocalTemplates(group)
+      setTemplates(data)
+    } catch (error) {
+      console.error('Failed to load templates:', error)
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
+  const loadRecipients = async (group: GroupType | 'everyone') => {
+    setRecipientsLoading(true)
+    clearExcluded()
+    try {
+      if (group === 'everyone') {
+        const data = await getContacts()
+        // Filter only active contacts
+        setRecipients(data.filter((c) => c.is_active !== false))
+      } else if (group === 'nudge_2') {
+        const data = await getGroupMembers('nudge', 2)
+        setRecipients(data.members)
+      } else if (group === 'nudge_15') {
+        const data = await getGroupMembers('nudge', 15)
+        setRecipients(data.members)
+      } else {
+        const data = await getGroupMembers(group)
+        setRecipients(data.members)
+      }
+    } catch (error) {
+      console.error('Failed to load recipients:', error)
+      setRecipients([])
+    } finally {
+      setRecipientsLoading(false)
+    }
+  }
+
+  const handleSaveTemplate = async () => {
+    if (!selectedGroup || !draft.text.trim() || !templateName.trim()) return
+    
+    try {
+      await createLocalTemplate({
+        name: templateName,
+        message_text: draft.text,
+        category: selectedGroup,
+        media_urls: draft.mediaUrls,
+        button_text: draft.buttonText || undefined,
+        button_url: draft.buttonUrl || undefined,
+      })
+      setTemplateName('')
+      setShowTemplateModal(false)
+      loadTemplates(selectedGroup)
+    } catch (error) {
+      console.error('Failed to save template:', error)
+    }
+  }
+
+  const handleDeleteTemplate = async (id: string) => {
+    try {
+      await deleteLocalTemplate(id)
+      if (selectedGroup) {
+        loadTemplates(selectedGroup)
+      }
+    } catch (error) {
+      console.error('Failed to delete template:', error)
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    
+    if (draft.mediaUrls.length + files.length > MAX_IMAGES) {
+      alert(`Maximum ${MAX_IMAGES} images allowed`)
+      return
+    }
+    
+    setUploading(true)
+    try {
+      for (const file of Array.from(files)) {
+        const url = await uploadMedia(file)
+        addMediaUrl(url)
+      }
+    } catch (error) {
+      console.error('Failed to upload:', error)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  const handleSendTest = async () => {
+    if (!testContact || !draft.text.trim()) return
+    
+    setSending(true)
+    try {
+      const message = replacePlaceholders(draft.text, {
+        name: testContact.name,
+        phone: testContact.phone,
+      })
+      
+      await sendTestMessage({
+        phone: testContact.phone,
+        message,
+        media_urls: draft.mediaUrls,
+      })
+      alert('Test message sent!')
+    } catch (error) {
+      console.error('Failed to send test:', error)
+      alert('Failed to send test message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleSendCampaign = async () => {
+    if (!selectedRecipientGroup || !draft.text.trim()) return
+    
+    // Filter out excluded recipients
+    const activeRecipients = recipients.filter((r) => !excludedIds.has(r.id))
+    if (activeRecipients.length === 0) {
+      alert('No recipients selected')
+      return
+    }
+    
+    setSending(true)
+    try {
+      const groupType = selectedRecipientGroup === 'everyone' ? 'custom' : selectedRecipientGroup.replace('_', '')
+      
+      await sendBulkCampaign({
+        type: groupType,
+        message_text: draft.text,
+        media_config: draft.mediaUrls.length > 0 ? {
+          fixed_urls: draft.mediaUrls,
+          random_pool: [],
+          random_count: 0,
+        } : undefined,
+        button_text: draft.buttonText || undefined,
+        button_url: draft.buttonUrl || undefined,
+        specific_recipients: activeRecipients.map((r) => r.phone),
+        nudge_days: selectedRecipientGroup === 'nudge_2' ? 2 : selectedRecipientGroup === 'nudge_15' ? 15 : undefined,
+      })
+      
+      setShowSendConfirmModal(false)
+      alert('Campaign sent!')
+    } catch (error) {
+      console.error('Failed to send campaign:', error)
+      alert('Failed to send campaign')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const insertPlaceholder = (token: string) => {
+    setDraft({ text: draft.text + token })
+  }
+
+  const saveTestContactData = (data: TestContact) => {
+    setTestContact(data)
+    saveTestContact(data)
+    setShowTestContactModal(false)
+  }
+
+  // Filter recipients for modal search
+  const filteredRecipients = recipients.filter((r) => {
+    if (!recipientSearch.trim()) return true
+    const q = recipientSearch.toLowerCase()
+    return r.name?.toLowerCase().includes(q) || r.phone.includes(q)
+  })
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <main className="mx-auto max-w-7xl p-4">
+          <div className="animate-pulse h-[600px] bg-muted rounded-xl" />
+        </main>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Navbar />
+
+      <main className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-semibold">Messages</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Craft and send WhatsApp campaigns
+            </p>
+          </div>
+          
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTestContactModal(true)}
+          >
+            <Settings className="h-4 w-4 mr-1.5" />
+            Test Contact
+          </Button>
+        </div>
+
+        {/* Three Column Layout - Fixed Widths */}
+        <div className="flex gap-5 min-h-[calc(100vh-180px)]">
+          {/* Left Column - Groups & Recipients - Fixed 220px */}
+          <div className="w-[220px] flex-shrink-0 space-y-4">
+            {/* Groups */}
+            <div className="border border-border rounded-lg p-3">
+              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Groups
+              </h3>
+              <div className="space-y-0.5">
+                {GROUPS.map((group) => (
+                  <button
+                    key={group.id}
+                    onClick={() => {
+                      setSelectedGroup(group.id)
+                      resetDraft()
+                    }}
+                    className={`w-full text-left px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                      selectedGroup === group.id
+                        ? 'bg-foreground text-background'
+                        : 'hover:bg-muted text-foreground'
+                    }`}
+                  >
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Recipients */}
+            <div className="border border-border rounded-lg p-3">
+              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Recipients
+              </h3>
+              <div className="space-y-0.5">
+                {RECIPIENT_GROUPS.map((group) => (
+                  <button
+                    key={group.id}
+                    onClick={() => {
+                      setSelectedRecipientGroup(group.id as GroupType | 'everyone')
+                      setShowRecipientsModal(true)
+                    }}
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                      selectedRecipientGroup === group.id
+                        ? 'bg-foreground text-background'
+                        : 'hover:bg-muted text-foreground'
+                    }`}
+                  >
+                    <span>{group.name}</span>
+                    {selectedRecipientGroup === group.id && (
+                      <span className="text-[10px] opacity-70">
+                        {recipients.filter((r) => !excludedIds.has(r.id)).length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Middle Column - Message Crafting - Flexible */}
+          <div className="flex-1 min-w-0 border border-border rounded-lg p-4">
+            {selectedGroup ? (
+              <div className="h-full flex flex-col">
+                <h3 className="text-sm font-medium mb-4">
+                  Craft Message — {GROUPS.find((g) => g.id === selectedGroup)?.name}
+                </h3>
+
+                {/* Placeholders */}
+                <div className="mb-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Insert field
+                  </p>
+                  <div className="flex gap-1.5">
+                    {PLACEHOLDERS.map((p) => (
+                      <button
+                        key={p.token}
+                        onClick={() => insertPlaceholder(p.token)}
+                        className="px-2 py-1 bg-muted hover:bg-border rounded text-xs font-mono transition-colors"
+                        title={p.description}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Message Text */}
+                <Textarea
+                  placeholder="Type your message here... Use [Name] for personalization"
+                  value={draft.text}
+                  onChange={(e) => setDraft({ text: e.target.value })}
+                  className="flex-1 min-h-[120px] text-sm"
+                />
+
+                {/* CTA Button */}
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <Input
+                    placeholder="Button text"
+                    value={draft.buttonText}
+                    onChange={(e) => setDraft({ buttonText: e.target.value })}
+                    className="text-sm"
+                  />
+                  <Input
+                    placeholder="Button URL"
+                    value={draft.buttonUrl}
+                    onChange={(e) => setDraft({ buttonUrl: e.target.value })}
+                    className="text-sm"
+                  />
+                </div>
+
+                {/* Images */}
+                <div className="mt-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      Images ({draft.mediaUrls.length}/{MAX_IMAGES})
+                    </p>
+                    <label className="cursor-pointer text-xs text-foreground hover:underline">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        disabled={uploading || draft.mediaUrls.length >= MAX_IMAGES}
+                      />
+                      {uploading ? 'Uploading...' : '+ Add'}
+                    </label>
+                  </div>
+                  
+                  {draft.mediaUrls.length > 0 && (
+                    <div className="flex gap-1.5 flex-wrap">
+                      {draft.mediaUrls.map((url, i) => (
+                        <div key={i} className="relative group">
+                          <img
+                            src={url}
+                            alt=""
+                            className="h-12 w-12 object-cover rounded border border-border"
+                          />
+                          <button
+                            onClick={() => removeMediaUrl(i)}
+                            className="absolute -top-1 -right-1 h-4 w-4 bg-foreground text-background rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 mt-4 pt-3 border-t border-border">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowTemplateModal(true)}
+                    disabled={!draft.text.trim()}
+                  >
+                    <Save className="h-3.5 w-3.5 mr-1" />
+                    Save
+                  </Button>
+                  
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleSendTest}
+                    disabled={!draft.text.trim() || !testContact || sending}
+                  >
+                    <FlaskConical className="h-3.5 w-3.5 mr-1" />
+                    Test
+                  </Button>
+                  
+                  <Button
+                    size="sm"
+                    onClick={() => setShowSendConfirmModal(true)}
+                    disabled={!draft.text.trim() || !selectedRecipientGroup || recipients.length === 0}
+                    className="ml-auto"
+                  >
+                    <Send className="h-3.5 w-3.5 mr-1" />
+                    Send
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                Select a group to start
+              </div>
+            )}
+          </div>
+
+          {/* Right Column - Templates & Preview - Fixed 280px */}
+          <div className="w-[280px] flex-shrink-0 space-y-4">
+            {/* Templates */}
+            <div className="border border-border rounded-lg p-3">
+              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Saved Templates
+              </h3>
+              
+              {!selectedGroup ? (
+                <p className="text-xs text-muted-foreground">Select a group</p>
+              ) : templatesLoading ? (
+                <div className="animate-pulse space-y-1.5">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="h-12 bg-muted rounded" />
+                  ))}
+                </div>
+              ) : templates.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No templates</p>
+              ) : (
+                <div className="space-y-1 max-h-[140px] overflow-y-auto">
+                  {templates.map((template) => (
+                    <div
+                      key={template.id}
+                      className="group flex items-start justify-between p-2 rounded hover:bg-muted cursor-pointer"
+                      onClick={() => loadTemplateIntoDraft(template)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium truncate">{template.name}</p>
+                        <p className="text-[10px] text-muted-foreground line-clamp-1">
+                          {template.message_text}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeleteTemplate(template.id)
+                        }}
+                        className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* WhatsApp Preview */}
+            <div className="border border-border rounded-lg p-3">
+              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Preview
+              </h3>
+              
+              {/* WhatsApp Chat Background */}
+              <div 
+                className="rounded-lg overflow-hidden"
+                style={{
+                  background: 'linear-gradient(180deg, #0b141a 0%, #0b141a 100%)',
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23111b21' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+                }}
+              >
+                <div className="p-3 min-h-[240px]">
+                  {draft.text ? (
+                    <div className="flex flex-col items-end">
+                      {/* Message Bubble */}
+                      <div 
+                        className="max-w-[240px] rounded-lg overflow-hidden"
+                        style={{ backgroundColor: '#005c4b' }}
+                      >
+                        {/* Images Grid */}
+                        {draft.mediaUrls.length > 0 && (
+                          <div className={`grid gap-0.5 ${
+                            draft.mediaUrls.length === 1 ? 'grid-cols-1' : 
+                            draft.mediaUrls.length === 2 ? 'grid-cols-2' :
+                            draft.mediaUrls.length === 3 ? 'grid-cols-2' :
+                            'grid-cols-2'
+                          }`}>
+                            {draft.mediaUrls.slice(0, 4).map((url, i) => (
+                              <div 
+                                key={i} 
+                                className={`relative ${
+                                  draft.mediaUrls.length === 3 && i === 0 ? 'col-span-2' : ''
+                                }`}
+                              >
+                                <img
+                                  src={url}
+                                  alt=""
+                                  className="w-full h-24 object-cover"
+                                />
+                                {draft.mediaUrls.length > 4 && i === 3 && (
+                                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                                    <span className="text-white text-sm font-medium">
+                                      +{draft.mediaUrls.length - 4}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Text Content */}
+                        <div className="px-2.5 py-1.5">
+                          <p className="text-[13px] text-white leading-[1.35] whitespace-pre-wrap break-words">
+                            {replacePlaceholders(draft.text, {
+                              name: testContact?.name || 'John',
+                              phone: testContact?.phone || '+919999999999',
+                            })}
+                          </p>
+                          {/* Timestamp */}
+                          <div className="flex justify-end mt-0.5">
+                            <span className="text-[10px] text-white/60">
+                              {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* CTA Button - Below bubble, WhatsApp style */}
+                      {draft.buttonText && draft.buttonUrl && (
+                        <div 
+                          className="mt-0.5 max-w-[240px] w-full rounded-lg py-2 flex items-center justify-center gap-1.5"
+                          style={{ backgroundColor: '#1f2c33' }}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 text-[#00a5f4]" />
+                          <span className="text-[13px] text-[#00a5f4] font-medium">
+                            {draft.buttonText}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center">
+                      <p className="text-xs text-white/40">
+                        Preview will appear here
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Save Template Modal */}
+      <Modal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        title="Save Template"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Template Name"
+            placeholder="e.g., Birthday Wish v1"
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowTemplateModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveTemplate} disabled={!templateName.trim()}>
+              Save
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Recipients Modal */}
+      <Modal
+        open={showRecipientsModal}
+        onClose={() => setShowRecipientsModal(false)}
+        title={`Recipients — ${RECIPIENT_GROUPS.find((g) => g.id === selectedRecipientGroup)?.name || ''}`}
+        size="lg"
+      >
+        <div className="space-y-4">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search by name or phone..."
+              value={recipientSearch}
+              onChange={(e) => setRecipientSearch(e.target.value)}
+              className="w-full h-10 pl-9 pr-4 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-foreground"
+            />
+          </div>
+
+          {/* Recipients List */}
+          {recipientsLoading ? (
+            <div className="animate-pulse space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-12 bg-muted rounded" />
+              ))}
+            </div>
+          ) : filteredRecipients.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No recipients found
+            </p>
+          ) : (
+            <div className="max-h-[400px] overflow-y-auto space-y-1">
+              {filteredRecipients.map((recipient) => (
+                <div
+                  key={recipient.id}
+                  className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted"
+                >
+                  <div className="flex items-center gap-3">
+                    <Toggle
+                      checked={!excludedIds.has(recipient.id)}
+                      onChange={() => toggleExcluded(recipient.id)}
+                      size="sm"
+                    />
+                    <div>
+                      <p className="text-sm font-medium">{recipient.name || 'Unknown'}</p>
+                      <p className="text-xs text-muted-foreground">{censorPhone(recipient.phone)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right text-xs text-muted-foreground">
+                    {recipient.dob && <p>DOB: {formatDate(recipient.dob)}</p>}
+                    {recipient.anniversary && <p>Anniv: {formatDate(recipient.anniversary)}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-4 border-t border-border">
+            <p className="text-sm text-muted-foreground">
+              {recipients.filter((r) => !excludedIds.has(r.id)).length} of {recipients.length} selected
+            </p>
+            <Button onClick={() => setShowRecipientsModal(false)}>Done</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Test Contact Modal */}
+      <TestContactModal
+        open={showTestContactModal}
+        onClose={() => setShowTestContactModal(false)}
+        initialData={testContact}
+        onSave={saveTestContactData}
+      />
+
+      {/* Send Confirmation Modal */}
+      <Modal
+        open={showSendConfirmModal}
+        onClose={() => setShowSendConfirmModal(false)}
+        title="Confirm Send"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <p className="text-sm">
+            You are about to send this message to{' '}
+            <strong>{recipients.filter((r) => !excludedIds.has(r.id)).length}</strong> recipients.
+          </p>
+
+          {/* Recipients List */}
+          <div className="max-h-[300px] overflow-y-auto space-y-1 border border-border rounded-lg p-2">
+            {recipients
+              .filter((r) => !excludedIds.has(r.id))
+              .map((recipient) => (
+                <div
+                  key={recipient.id}
+                  className="flex items-center justify-between py-2 px-3 rounded hover:bg-muted"
+                >
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <p className="text-sm font-medium">{recipient.name || 'Unknown'}</p>
+                      <p className="text-xs text-muted-foreground">{censorPhone(recipient.phone)}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => toggleExcluded(recipient.id)}
+                    className="text-xs text-red-500 hover:underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-4 border-t border-border">
+            <Button variant="secondary" onClick={() => setShowSendConfirmModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSendCampaign} disabled={sending}>
+              {sending ? 'Sending...' : 'Send Campaign'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+// Test Contact Modal Component
+function TestContactModal({
+  open,
+  onClose,
+  initialData,
+  onSave,
+}: {
+  open: boolean
+  onClose: () => void
+  initialData: TestContact | null
+  onSave: (data: TestContact) => void
+}) {
+  const [data, setData] = useState<TestContact>({
+    name: '',
+    phone: '',
+    dob_month: 1,
+    dob_day: 1,
+    anniversary_month: 1,
+    anniversary_day: 1,
+  })
+
+  useEffect(() => {
+    if (initialData) {
+      setData(initialData)
+    }
+  }, [initialData, open])
+
+  const handleSave = () => {
+    if (!data.name.trim() || !data.phone.trim()) return
+    onSave(data)
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Test Contact Settings" size="sm">
+      <div className="space-y-4">
+        <Input
+          label="Name"
+          placeholder="Test contact name"
+          value={data.name}
+          onChange={(e) => setData({ ...data, name: e.target.value })}
+        />
+        
+        <Input
+          label="Phone (with country code)"
+          placeholder="+919999999999"
+          value={data.phone}
+          onChange={(e) => setData({ ...data, phone: e.target.value })}
+        />
+
+        {/* DOB */}
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Birthday</label>
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <select
+              value={data.dob_month}
+              onChange={(e) => setData({ ...data, dob_month: parseInt(e.target.value) })}
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+            >
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(2000, i).toLocaleString('en', { month: 'long' })}
+                </option>
+              ))}
+            </select>
+            <select
+              value={data.dob_day}
+              onChange={(e) => setData({ ...data, dob_day: parseInt(e.target.value) })}
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+            >
+              {Array.from({ length: 31 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {i + 1}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Anniversary */}
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Anniversary</label>
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <select
+              value={data.anniversary_month}
+              onChange={(e) => setData({ ...data, anniversary_month: parseInt(e.target.value) })}
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+            >
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(2000, i).toLocaleString('en', { month: 'long' })}
+                </option>
+              ))}
+            </select>
+            <select
+              value={data.anniversary_day}
+              onChange={(e) => setData({ ...data, anniversary_day: parseInt(e.target.value) })}
+              className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+            >
+              {Array.from({ length: 31 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {i + 1}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={!data.name.trim() || !data.phone.trim()}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
