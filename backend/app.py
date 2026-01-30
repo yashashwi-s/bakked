@@ -897,17 +897,21 @@ class LocalTemplateRequest(BaseModel):
 @app.post("/local-templates")
 async def create_local_template(template: LocalTemplateRequest):
     """Save a template locally"""
-    # Convert buttons to dict list for JSON storage
-    buttons_data = [btn.dict() for btn in template.buttons] if template.buttons else []
-    
-    result = db.create_local_template(
-        name=template.name,
-        message_text=template.message_text,
-        category=template.category,
-        media_urls=template.media_urls,
-        buttons=buttons_data
-    )
-    return result
+    try:
+        # Convert buttons to dict list for JSON storage
+        buttons_data = [btn.dict() for btn in template.buttons] if template.buttons else []
+        
+        result = db.create_local_template(
+            name=template.name,
+            message_text=template.message_text,
+            category=template.category,
+            media_urls=template.media_urls,
+            buttons=buttons_data
+        )
+        return result
+    except Exception as e:
+        print(f"Error creating template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/local-templates/{template_id}")
 async def delete_local_template(template_id: str):

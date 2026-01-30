@@ -142,10 +142,21 @@ class SupabaseDB:
             "message_text": message_text,
             "category": category,
             "media_urls": media_urls,
-            "buttons": buttons  # JSONB array of button objects
         }
-        response = self.client.table("message_templates").insert(data).execute()
-        return response.data[0] if response.data else {}
+        # Try with buttons first, fall back without if column doesn't exist
+        if buttons:
+            data["buttons"] = buttons
+        
+        try:
+            response = self.client.table("message_templates").insert(data).execute()
+            return response.data[0] if response.data else {}
+        except Exception as e:
+            # If buttons column doesn't exist, try without it
+            if "buttons" in str(e) and "buttons" in data:
+                del data["buttons"]
+                response = self.client.table("message_templates").insert(data).execute()
+                return response.data[0] if response.data else {}
+            raise e
 
     def delete_local_template(self, template_id: str) -> bool:
         """Delete a local template"""

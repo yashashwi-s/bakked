@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
+import { Toaster } from 'sonner'
 import './globals.css'
 
 const inter = Inter({
@@ -21,6 +22,15 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased`}>
         {children}
+        <Toaster 
+          position="bottom-right"
+          richColors
+          closeButton
+          toastOptions={{
+            duration: 4000,
+            className: 'text-sm',
+          }}
+        />
       </body>
     </html>
   )

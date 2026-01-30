@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { Navbar } from '@/components/layout'
 import { Button, Input, Textarea, Modal, Toggle } from '@/components/ui'
 import { 
@@ -121,6 +122,7 @@ export default function MessagesPage() {
       setTemplates(data)
     } catch (error) {
       console.error('Failed to load templates:', error)
+      toast.error('Failed to load templates')
     } finally {
       setTemplatesLoading(false)
     }
@@ -149,6 +151,7 @@ export default function MessagesPage() {
       }
     } catch (error) {
       console.error('Failed to load recipients:', error)
+      toast.error('Failed to load recipients')
       setRecipients([])
     } finally {
       setRecipientsLoading(false)
@@ -158,6 +161,7 @@ export default function MessagesPage() {
   const handleSaveTemplate = async () => {
     if (!selectedGroup || !draft.text.trim() || !templateName.trim()) return
     
+    const toastId = toast.loading('Saving template...')
     try {
       await createLocalTemplate({
         name: templateName,
@@ -169,8 +173,10 @@ export default function MessagesPage() {
       setTemplateName('')
       setShowTemplateModal(false)
       loadTemplates(selectedGroup)
+      toast.success('Template saved!', { id: toastId })
     } catch (error) {
       console.error('Failed to save template:', error)
+      toast.error('Failed to save template', { id: toastId })
     }
   }
 
@@ -180,8 +186,10 @@ export default function MessagesPage() {
       if (selectedGroup) {
         loadTemplates(selectedGroup)
       }
+      toast.success('Template deleted')
     } catch (error) {
       console.error('Failed to delete template:', error)
+      toast.error('Failed to delete template')
     }
   }
 
@@ -190,18 +198,21 @@ export default function MessagesPage() {
     if (!files || files.length === 0) return
     
     if (draft.mediaUrls.length + files.length > MAX_IMAGES) {
-      alert(`Maximum ${MAX_IMAGES} images allowed`)
+      toast.error(`Maximum ${MAX_IMAGES} images allowed`)
       return
     }
     
     setUploading(true)
+    const toastId = toast.loading('Uploading image...')
     try {
       for (const file of Array.from(files)) {
         const url = await uploadMedia(file)
         addMediaUrl(url)
       }
+      toast.success('Image uploaded!', { id: toastId })
     } catch (error) {
       console.error('Failed to upload:', error)
+      toast.error('Failed to upload image', { id: toastId })
     } finally {
       setUploading(false)
       e.target.value = ''
@@ -212,6 +223,7 @@ export default function MessagesPage() {
     if (!testContact || !draft.text.trim()) return
     
     setSending(true)
+    const toastId = toast.loading('Sending test message...')
     try {
       const message = replacePlaceholders(draft.text, {
         name: testContact.name,
@@ -224,10 +236,10 @@ export default function MessagesPage() {
         message,
         media_urls: draft.mediaUrls,
       })
-      alert('Test message sent!')
+      toast.success('Test message sent!', { id: toastId })
     } catch (error) {
       console.error('Failed to send test:', error)
-      alert('Failed to send test message')
+      toast.error('Failed to send test message', { id: toastId })
     } finally {
       setSending(false)
     }
@@ -246,11 +258,12 @@ export default function MessagesPage() {
     }
     
     if (recipientPhones.length === 0) {
-      alert('No recipients selected')
+      toast.error('No recipients selected')
       return
     }
     
     setSending(true)
+    const toastId = toast.loading(`Sending to ${recipientPhones.length} recipients...`)
     try {
       const groupType = selectedRecipientGroup === 'everyone' ? 'custom' : 
         selectedRecipientGroup.startsWith('custom_') ? 'custom' :
@@ -270,10 +283,10 @@ export default function MessagesPage() {
       })
       
       setShowSendConfirmModal(false)
-      alert('Campaign sent!')
+      toast.success(`Campaign sent to ${recipientPhones.length} recipients!`, { id: toastId })
     } catch (error) {
       console.error('Failed to send campaign:', error)
-      alert('Failed to send campaign')
+      toast.error('Failed to send campaign', { id: toastId })
     } finally {
       setSending(false)
     }
@@ -287,6 +300,7 @@ export default function MessagesPage() {
     setTestContact(data)
     saveTestContact(data)
     setShowTestContactModal(false)
+    toast.success('Test contact saved')
   }
 
   const handleCreateGroup = (name: string, description: string) => {
@@ -297,6 +311,7 @@ export default function MessagesPage() {
     })
     refreshGroups()
     setShowCreateGroupModal(false)
+    toast.success(`Group "${name}" created`)
   }
 
   const handleDeleteGroup = (id: string) => {
@@ -308,6 +323,7 @@ export default function MessagesPage() {
     if (selectedRecipientGroup === id) {
       setSelectedRecipientGroup(null)
     }
+    toast.success('Group deleted')
   }
 
   const handleUpdateContactPhone = async (contactId: string, newPhone: string) => {
@@ -319,9 +335,10 @@ export default function MessagesPage() {
       }
       setEditingContactId(null)
       setEditingContactPhone('')
+      toast.success('Phone number updated')
     } catch (error) {
       console.error('Failed to update contact:', error)
-      alert('Failed to update phone number')
+      toast.error('Failed to update phone number')
     }
   }
 
