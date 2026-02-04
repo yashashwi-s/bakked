@@ -265,7 +265,10 @@ async def create_contact(contact: Contact):
     result = db.upsert_contact(
         phone=contact.phone,
         name=contact.name,
-        tags=contact.tags
+        tags=contact.tags,
+        dob=getattr(contact, 'dob', None),
+        anniversary=getattr(contact, 'anniversary', None),
+        last_visit=getattr(contact, 'last_visit', None)
     )
     return result
 
@@ -275,6 +278,7 @@ class UpdateContactRequest(BaseModel):
     phone: Optional[str] = None
     dob: Optional[str] = None
     anniversary: Optional[str] = None
+    last_visit: Optional[str] = None
     is_active: Optional[bool] = None
 
 @app.put("/contacts/{contact_id}")
@@ -292,6 +296,8 @@ async def update_contact(contact_id: str, data: UpdateContactRequest):
         update_data["dob"] = data.dob if data.dob else None
     if data.anniversary is not None:
         update_data["anniversary"] = data.anniversary if data.anniversary else None
+    if data.last_visit is not None:
+        update_data["last_visit"] = data.last_visit if data.last_visit else None
     
     if not update_data:
         raise HTTPException(status_code=400, detail="No data to update")

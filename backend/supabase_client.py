@@ -54,7 +54,9 @@ class SupabaseDB:
         response = self.client.table("contacts").select("*").eq("phone", phone).single().execute()
         return response.data
     
-    def upsert_contact(self, phone: str, name: Optional[str] = None, tags: List[str] = []) -> Dict[str, Any]:
+    def upsert_contact(self, phone: str, name: Optional[str] = None, tags: List[str] = [], 
+                      dob: Optional[str] = None, anniversary: Optional[str] = None, 
+                      last_visit: Optional[str] = None) -> Dict[str, Any]:
         """Create or update a contact"""
         if not self.client:
             return {}
@@ -63,6 +65,12 @@ class SupabaseDB:
             data["name"] = name
         if tags:
             data["tags"] = tags
+        if dob:
+            data["dob"] = dob
+        if anniversary:
+            data["anniversary"] = anniversary
+        if last_visit:
+            data["last_visit"] = last_visit
         response = self.client.table("contacts").upsert(data, on_conflict="phone").execute()
         return response.data[0] if response.data else {}
     
