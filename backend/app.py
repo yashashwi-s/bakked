@@ -253,10 +253,10 @@ async def receive_webhook(request: Request):
 
 # ==================== CONTACTS API ====================
 @app.get("/contacts")
-async def get_contacts(limit: int = 100):
-    """Get all contacts from CRM"""
-    contacts = db.get_contacts(limit=limit)
-    return {"contacts": contacts, "count": len(contacts)}
+async def get_contacts(page: int = 1, limit: int = 100, search: Optional[str] = None):
+    """Get paginated contacts from CRM"""
+    result = db.get_contacts(page=page, limit=limit, search=search)
+    return result
 
 
 @app.post("/contacts")
@@ -271,6 +271,15 @@ async def create_contact(contact: Contact):
         last_visit=getattr(contact, 'last_visit', None)
     )
     return result
+
+
+@app.delete("/contacts/{contact_id}")
+async def delete_contact(contact_id: str):
+    """Delete a contact"""
+    success = db.delete_contact(contact_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return {"success": True}
 
 
 class UpdateContactRequest(BaseModel):

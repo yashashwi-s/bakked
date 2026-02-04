@@ -67,6 +67,23 @@ const initialDraft: DraftMessage = {
   buttons: [],
 }
 
+const STORAGE_KEY = 'bakked_excluded_ids'
+
+const getStoredExclusions = (): Set<string> => {
+  if (typeof window === 'undefined') return new Set()
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? new Set(JSON.parse(stored)) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+const saveExclusions = (ids: Set<string>) => {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(ids)))
+}
+
 export const useMessagesStore = create<MessagesState>((set) => ({
   selectedGroup: null,
   selectedTemplate: null,
@@ -75,7 +92,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
   templatesLoading: false,
   recipients: [],
   recipientsLoading: false,
-  excludedIds: new Set(),
+  excludedIds: getStoredExclusions(),
   draft: initialDraft,
   testContact: null,
   showRecipientsModal: false,
@@ -99,9 +116,13 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       } else {
         newSet.add(id)
       }
+      saveExclusions(newSet)
       return { excludedIds: newSet }
     }),
-  clearExcluded: () => set({ excludedIds: new Set() }),
+  clearExcluded: () => {
+    saveExclusions(new Set())
+    set({ excludedIds: new Set() })
+  },
   setDraft: (draft) => set((state) => ({ draft: { ...state.draft, ...draft } })),
   resetDraft: () => set({ draft: initialDraft }),
   setTestContact: (contact) => set({ testContact: contact }),

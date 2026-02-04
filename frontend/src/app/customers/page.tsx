@@ -8,17 +8,20 @@ import { Input, Button, Toggle, Modal, Badge } from '@/components/ui'
 import { isAuthenticated, censorPhone, formatPhone, formatDate, formatDaysAgo, debounce, formatRelativeTime } from '@/lib/utils'
 import { getContacts, updateContact, createContact } from '@/lib/api'
 import type { Contact } from '@/types'
-import { Search, Eye, EyeOff, Pencil, X, Check, UserPlus } from 'lucide-react'
+import { Search, Eye, EyeOff, Pencil, X, Check, UserPlus, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 
 export default function CustomersPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [contacts, setContacts] = useState<Contact[]>([])
+  const [totalContacts, setTotalContacts] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
   const [searchQuery, setSearchQuery] = useState('')
   const [revealedPhones, setRevealedPhones] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editData, setEditData] = useState<Partial<Contact>>({})
   const [saving, setSaving] = useState(false)
+  const CONTACTS_PER_PAGE = 100
 
   // Add Contact Dialog State
   const [showAddDialog, setShowAddDialog] = useState(false)
@@ -39,38 +42,32 @@ export default function CustomersPage() {
       return
     }
     loadContacts()
-  }, [router])
+  }, [router, currentPage, searchQuery])
 
   const loadContacts = async () => {
     try {
-      const data = await getContacts()
-      // Add is_active field if not present (default true)
-      const withActive = data.map((c) => ({
-        ...c,
-        is_active: c.is_active !== false,
-      }))
-      setContacts(withActive)
+      setLoading(true)
+      const data = await getContacts(currentPage, CONTACTS_PER_PAGE, searchQuery)
+      setContacts(data.contacts || [])
+      setTotalContacts(data.count || 0)
     } catch (error) {
       console.error('Failed to load contacts:', error)
+      toast.error('Failed to load contacts')
     } finally {
       setLoading(false)
     }
   }
 
-  // Filter contacts based on search
+  // Frontend filtering is now secondary to server search, 
+  // but we'll keep useMemo for small UI updates or while loading
   const filteredContacts = useMemo(() => {
-    if (!searchQuery.trim()) return contacts
-    const query = searchQuery.toLowerCase()
-    return contacts.filter(
-      (c) =>
-        c.name?.toLowerCase().includes(query) ||
-        c.phone.includes(query)
-    )
-  }, [contacts, searchQuery])
+    return contacts
+  }, [contacts])
 
   const handleSearchChange = debounce((value: string) => {
     setSearchQuery(value)
-  }, 300)
+    setCurrentPage(1) // Reset to first page on search
+  }, 500)
 
   const togglePhoneReveal = (id: string) => {
     setRevealedPhones((prev) => {
@@ -84,17 +81,21 @@ export default function CustomersPage() {
     })
   }
 
-  const toggleActive = async (id: string) => {
-    const contact = contacts.find((c) => c.id === id)
-    if (!contact) return
+  const handleDelete = async (id: string, name: string | null) => {
+    if (!confirm(`Are you sure you want to delete ${name || 'this contact'}?`)) {
+      return
+    }
 
-    const newValue = !contact.is_active
-    setContacts((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, is_active: newValue } : c))
-    )
-
-    // Persist to backend (if you add this field to DB)
-    // await updateContact(id, { is_active: newValue })
+    try {
+      const { deleteContact } = await import('@/lib/api')
+      await deleteContact(id)
+      setContacts((prev) => prev.filter((c) => c.id !== id))
+      setTotalContacts(prev => prev - 1)
+      toast.success('Contact deleted')
+    } catch (error) {
+      console.error('Failed to delete:', error)
+      toast.error('Failed to delete contact')
+    }
   }
 
   const startEdit = (contact: Contact) => {
@@ -306,7 +307,7 @@ export default function CustomersPage() {
           <div>
             <h1 className="text-xl font-semibold">Customers</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {filteredContacts.length} of {contacts.length} contacts
+              {totalContacts} customers in CRM
             </p>
           </div>
 
@@ -331,70 +332,64 @@ export default function CustomersPage() {
         </div>
 
         {/* Table */}
-        <div className="border border-border rounded-xl overflow-hidden">
+        <div className="border border-border rounded-xl overflow-hidden bg-background">
           <div className="overflow-x-auto">
             <table className="data-table">
               <thead className="bg-muted">
                 <tr>
-                  <th className="w-12">Active</th>
                   <th>Name</th>
                   <th>Phone</th>
                   <th>Birthday</th>
                   <th>Anniversary</th>
                   <th>Last Visit</th>
                   <th>Last Message</th>
-                  <th className="w-20">Actions</th>
+                  <th className="w-24">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredContacts.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-8 text-muted-foreground">
-                      No contacts found
+                    <td colSpan={7} className="text-center py-12 text-muted-foreground bg-muted/30">
+                      <div className="flex flex-col items-center gap-2">
+                        <Search className="h-8 w-8 text-muted-foreground/30" />
+                        <p>No contacts found on this page</p>
+                      </div>
                     </td>
                   </tr>
                 ) : (
                   filteredContacts.map((contact) => (
-                    <tr key={contact.id}>
-                      {/* Active Toggle */}
-                      <td>
-                        <Toggle
-                          checked={contact.is_active !== false}
-                          onChange={() => toggleActive(contact.id)}
-                          size="sm"
-                        />
-                      </td>
-
+                    <tr key={contact.id} className="group hover:bg-muted/30 transition-colors">
                       {/* Name */}
-                      <td>
+                      <td className="py-4">
                         {editingId === contact.id ? (
                           <input
                             type="text"
                             value={editData.name || ''}
                             onChange={(e) => setEditData({ ...editData, name: e.target.value })}
-                            className="w-full h-8 px-2 rounded border border-border bg-background text-sm"
+                            className="w-full h-9 px-3 rounded-lg border border-border bg-background text-sm focus:ring-1 focus:ring-foreground outline-none"
+                            autoFocus
                           />
                         ) : (
-                          <span className="font-medium">{contact.name || '—'}</span>
+                          <div className="font-medium">{contact.name || <span className="text-muted-foreground/40 italic">Unnamed</span>}</div>
                         )}
                       </td>
 
                       {/* Phone */}
                       <td>
-                        <div className="flex items-center gap-2 min-w-[180px]">
-                          <span className="font-mono text-sm flex-1">
+                        <div className="flex items-center gap-2 group/phone">
+                          <span className="font-mono text-sm">
                             {revealedPhones.has(contact.id)
                               ? formatPhone(contact.phone)
                               : censorPhone(contact.phone)}
                           </span>
                           <button
                             onClick={() => togglePhoneReveal(contact.id)}
-                            className="p-1 hover:bg-muted rounded flex-shrink-0"
+                            className="p-1 hover:bg-muted rounded opacity-0 group-hover/phone:opacity-100 transition-opacity"
                           >
                             {revealedPhones.has(contact.id) ? (
-                              <EyeOff className="h-4 w-4 text-muted-foreground" />
+                              <EyeOff className="h-3 w-3 text-muted-foreground" />
                             ) : (
-                              <Eye className="h-4 w-4 text-muted-foreground" />
+                              <Eye className="h-3 w-3 text-muted-foreground" />
                             )}
                           </button>
                         </div>
@@ -402,30 +397,16 @@ export default function CustomersPage() {
 
                       {/* Birthday */}
                       <td>
-                        {editingId === contact.id ? (
-                          <input
-                            type="date"
-                            value={editData.dob || ''}
-                            onChange={(e) => setEditData({ ...editData, dob: e.target.value })}
-                            className="h-8 px-2 rounded border border-border bg-background text-sm"
-                          />
-                        ) : (
-                          formatDate(contact.dob)
-                        )}
+                        <span className="text-sm">
+                          {contact.dob ? formatDate(contact.dob) : '—'}
+                        </span>
                       </td>
 
                       {/* Anniversary */}
                       <td>
-                        {editingId === contact.id ? (
-                          <input
-                            type="date"
-                            value={editData.anniversary || ''}
-                            onChange={(e) => setEditData({ ...editData, anniversary: e.target.value })}
-                            className="h-8 px-2 rounded border border-border bg-background text-sm"
-                          />
-                        ) : (
-                          formatDate(contact.anniversary)
-                        )}
+                        <span className="text-sm">
+                          {contact.anniversary ? formatDate(contact.anniversary) : '—'}
+                        </span>
                       </td>
 
                       {/* Last Visit */}
@@ -456,37 +437,85 @@ export default function CustomersPage() {
                       </td>
 
                       {/* Actions */}
-                      <td>
-                        {editingId === contact.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={saveEdit}
-                              disabled={saving}
-                              className="p-1.5 hover:bg-green-100 dark:hover:bg-green-900 rounded text-green-600"
-                            >
-                              <Check className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={cancelEdit}
-                              className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900 rounded text-red-600"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => startEdit(contact)}
-                            className="p-1.5 hover:bg-muted rounded"
-                          >
-                            <Pencil className="h-4 w-4 text-muted-foreground" />
-                          </button>
-                        )}
+                      <td className="py-4">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {editingId === contact.id ? (
+                            <>
+                              <button
+                                onClick={saveEdit}
+                                disabled={saving}
+                                className="p-2 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg text-green-600 transition-colors"
+                                title="Save"
+                              >
+                                <Check className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={cancelEdit}
+                                className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-red-600 transition-colors"
+                                title="Cancel"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => startEdit(contact)}
+                                className="p-2 hover:bg-foreground/5 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(contact.id, contact.name)}
+                                className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-muted-foreground hover:text-red-500 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination Footer */}
+          <div className="px-4 py-4 bg-muted/20 border-t border-border flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">
+              Showing <span className="font-medium">{((currentPage - 1) * CONTACTS_PER_PAGE) + 1}</span> to{' '}
+              <span className="font-medium">
+                {Math.min(currentPage * CONTACTS_PER_PAGE, totalContacts)}
+              </span>{' '}
+              of <span className="font-medium">{totalContacts}</span> customers
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1 || loading}
+                className="h-8 w-8 p-0"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="text-xs font-medium px-2">
+                Page {currentPage} of {Math.ceil(totalContacts / CONTACTS_PER_PAGE) || 1}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={currentPage >= Math.ceil(totalContacts / CONTACTS_PER_PAGE) || loading}
+                className="h-8 w-8 p-0"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
 

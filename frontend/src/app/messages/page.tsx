@@ -130,11 +130,10 @@ export default function MessagesPage() {
 
   const loadRecipients = async (group: string) => {
     setRecipientsLoading(true)
-    clearExcluded()
     try {
       if (group === 'everyone') {
-        const data = await getContacts()
-        setRecipients(data.filter((c) => c.is_active !== false))
+        const data = await getContacts(1, 1000)
+        setRecipients(data.contacts || [])
       } else if (group === 'nudge_2') {
         const data = await getGroupMembers('nudge', 2)
         setRecipients(data.members)
@@ -143,8 +142,8 @@ export default function MessagesPage() {
         setRecipients(data.members)
       } else if (group.startsWith('custom_')) {
         // Custom group - load all contacts (can be filtered later)
-        const data = await getContacts()
-        setRecipients(data.filter((c) => c.is_active !== false))
+        const data = await getContacts(1, 1000)
+        setRecipients(data.contacts || [])
       } else {
         const data = await getGroupMembers(group)
         setRecipients(data.members)

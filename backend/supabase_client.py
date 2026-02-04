@@ -31,13 +31,38 @@ class SupabaseDB:
         self.client = get_supabase_client()
     
     # ---------- Contacts ----------
-    def get_contacts(self, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Fetch all contacts"""
+    def get_contacts(self, limit: int = 100, page: int = 1, search: str = None) -> Dict[str, Any]:
+        """Fetch paginated contacts"""
         if not self.client:
-            return []
-        # Fetch more contacts for filtering
-        response = self.client.table("contacts").select("*").limit(limit).execute()
-        return response.data or []
+            return {"contacts": [], "count": 0}
+        
+        offset = (page - 1) * limit
+        
+        try:
+            # Build query
+            query = self.client.table("contacts").select("*", count="exact")
+            
+            if search:
+                # Search in name OR phone
+                query = query.or_(f"name.ilike.%{search}%,phone.ilike.%{search}%")
+            
+            # Get total count (with filters applied)
+            count_res = query.limit(0).execute()
+            total = count_res.count if hasattr(count_res, 'count') else 0
+            
+            # Get data
+            response = query\
+                .order("created_at", desc=True)\
+                .range(offset, offset + limit - 1)\
+                .execute()
+            
+            return {
+                "contacts": response.data or [],
+                "count": total
+            }
+        except Exception as e:
+            print(f"Error fetching contacts: {e}")
+            return {"contacts": [], "count": 0}
     
     def get_contacts_all(self) -> List[Dict[str, Any]]:
         """Fetch ALL contacts for internal filtering"""
@@ -73,6 +98,13 @@ class SupabaseDB:
             data["last_visit"] = last_visit
         response = self.client.table("contacts").upsert(data, on_conflict="phone").execute()
         return response.data[0] if response.data else {}
+    
+    def delete_contact(self, contact_id: str) -> bool:
+        """Delete a contact"""
+        if not self.client:
+            return False
+        response = self.client.table("contacts").delete().eq("id", contact_id).execute()
+        return len(response.data) > 0 if response.data else False
     
     # ---------- Campaigns ----------
     def create_campaign(self, name: str, template_used: str, total_recipients: int = 0) -> Dict[str, Any]:

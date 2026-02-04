@@ -25,6 +25,9 @@ class Contact(BaseModel):
     id: Optional[str] = None
     phone: str
     name: Optional[str] = None
+    dob: Optional[str] = None
+    anniversary: Optional[str] = None
+    last_visit: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     created_at: Optional[datetime] = None
 

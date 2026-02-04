@@ -39,9 +39,12 @@ export async function verifyPassword(password: string): Promise<boolean> {
 // ==================== CONTACTS ====================
 import type { Contact, ContactsResponse, GroupMembersResponse } from '@/types'
 
-export async function getContacts(limit = 1000): Promise<Contact[]> {
-  const response = await fetchApi<ContactsResponse>(`/contacts?limit=${limit}`)
-  return response.contacts || []
+export async function getContacts(page = 1, limit = 100, search?: string): Promise<ContactsResponse> {
+  let url = `/contacts?page=${page}&limit=${limit}`
+  if (search) {
+    url += `&search=${encodeURIComponent(search)}`
+  }
+  return fetchApi<ContactsResponse>(url)
 }
 
 export async function updateContact(id: string, data: Partial<Contact>): Promise<Contact> {
@@ -58,6 +61,13 @@ export async function createContact(data: Partial<Contact>): Promise<Contact> {
     body: JSON.stringify(data),
   })
   return response
+}
+
+export async function deleteContact(id: string): Promise<boolean> {
+  const response = await fetchApi<{ success: boolean }>(`/contacts/${id}`, {
+    method: 'DELETE',
+  })
+  return response.success
 }
 
 // ==================== GROUPS & RECIPIENTS ====================
