@@ -173,7 +173,8 @@ class SupabaseDB:
 
     # ---------- Templates (Local) ----------
     def create_local_template(self, name: str, message_text: str, category: str, 
-                            media_urls: List[str] = [], buttons: List[Dict[str, Any]] = []) -> Dict[str, Any]:
+                            media_urls: List[str] = [], buttons: List[Dict[str, Any]] = [],
+                            card_body_text: str = None) -> Dict[str, Any]:
         """Create a local message template"""
         if not self.client:
             return {}
@@ -186,6 +187,10 @@ class SupabaseDB:
         # Try with buttons first, fall back without if column doesn't exist
         if buttons:
             data["buttons"] = buttons
+        
+        # Add card_body_text for carousel templates
+        if card_body_text:
+            data["card_body_text"] = card_body_text
         
         try:
             response = self.client.table("message_templates").insert(data).execute()

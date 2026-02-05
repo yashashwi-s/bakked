@@ -5,6 +5,7 @@ interface DraftMessage {
   text: string
   mediaUrls: string[]
   buttons: CTAButton[] // Multiple buttons (up to 2)
+  cardBodyText: string // For carousel cards - same text on all cards
 }
 
 interface MessagesState {
@@ -65,6 +66,7 @@ const initialDraft: DraftMessage = {
   text: '',
   mediaUrls: [],
   buttons: [],
+  cardBodyText: '',
 }
 
 const STORAGE_KEY = 'bakked_excluded_ids'
@@ -166,6 +168,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
         text: template.message_text,
         mediaUrls: template.media_urls || [],
         buttons: template.buttons || [],
+        cardBodyText: (template as any).card_body_text || '',
       },
     }),
 }))

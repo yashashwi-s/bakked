@@ -1055,6 +1055,7 @@ class LocalTemplateRequest(BaseModel):
     category: str
     media_urls: List[str] = []
     buttons: List[CTAButton] = []
+    card_body_text: Optional[str] = None  # For carousel - same text on all cards
 
 @app.post("/local-templates")
 async def create_local_template(template: LocalTemplateRequest):
@@ -1068,7 +1069,8 @@ async def create_local_template(template: LocalTemplateRequest):
             message_text=template.message_text,
             category=template.category,
             media_urls=template.media_urls,
-            buttons=buttons_data
+            buttons=buttons_data,
+            card_body_text=template.card_body_text
         )
         return result
     except Exception as e:
@@ -1153,8 +1155,34 @@ async def submit_template_to_meta(template_id: str, dry_run: bool = False):
             body_component["example"] = {"body_text": [example_values]}
         components.append(body_component)
         
-        # Build carousel cards
+        # Build carousel cards - each card shows one product with consistent styling
         cards = []
+        
+        # Get card body text - use a shortened version of main message or a default
+        main_text = template.get("message_text", "")
+        # For carousel cards, use a short, punchy text (first sentence or custom)
+        card_body = template.get("card_body_text") or "Tap to view details 💕"
+        
+        # Get button config from template or use default
+        template_buttons = template.get("buttons", [])
+        card_button = {"type": "QUICK_REPLY", "text": "Order Now"}
+        
+        # If template has a URL button, use that for cards
+        for btn in template_buttons:
+            if btn.get("type") == "url" and btn.get("url"):
+                card_button = {
+                    "type": "URL",
+                    "text": btn.get("text", "View")[:20],  # Max 20 chars for button
+                    "url": btn.get("url")
+                }
+                break
+            elif btn.get("type") == "quick_reply":
+                card_button = {
+                    "type": "QUICK_REPLY",
+                    "text": btn.get("text", "View Details")[:20]
+                }
+                break
+        
         for i, image_url in enumerate(media_urls[:10]):  # Max 10 cards
             print(f"  📤 Uploading image {i+1}/{num_images}...")
             header_handle = upload_image_to_meta(image_url)
@@ -1163,7 +1191,7 @@ async def submit_template_to_meta(template_id: str, dry_run: bool = False):
                 print(f"  ❌ Failed to upload image {i+1}, skipping card")
                 continue
             
-            # Each card has: HEADER (image), BODY (optional text), BUTTONS
+            # Each card has: HEADER (image), BODY (same text for all), BUTTONS
             card = {
                 "components": [
                     {
@@ -1173,16 +1201,11 @@ async def submit_template_to_meta(template_id: str, dry_run: bool = False):
                     },
                     {
                         "type": "BODY",
-                        "text": f"Item {i+1}"  # Placeholder card body
+                        "text": card_body  # Same text for all cards
                     },
                     {
                         "type": "BUTTONS",
-                        "buttons": [
-                            {
-                                "type": "QUICK_REPLY",
-                                "text": "View Details"
-                            }
-                        ]
+                        "buttons": [card_button]
                     }
                 ]
             }

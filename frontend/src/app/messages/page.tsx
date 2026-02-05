@@ -168,6 +168,7 @@ export default function MessagesPage() {
         category: selectedGroup,
         media_urls: draft.mediaUrls,
         buttons: draft.buttons,
+        card_body_text: draft.cardBodyText || undefined,  // For carousel templates
       })
       setTemplateName('')
       setShowTemplateModal(false)
@@ -630,9 +631,17 @@ export default function MessagesPage() {
                 {/* Images */}
                 <div className="mt-3">
                   <div className="flex items-center justify-between mb-1.5">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                      Images ({draft.mediaUrls.length}/{MAX_IMAGES})
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                        Images ({draft.mediaUrls.length}/{MAX_IMAGES})
+                      </p>
+                      {draft.mediaUrls.length >= 2 && (
+                        <span className="flex items-center gap-1 text-[9px] text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded-full">
+                          <Layers className="h-2.5 w-2.5" />
+                          Carousel
+                        </span>
+                      )}
+                    </div>
                     <label className="cursor-pointer text-xs text-foreground hover:underline">
                       <input
                         type="file"
@@ -653,8 +662,17 @@ export default function MessagesPage() {
                           <img
                             src={url}
                             alt=""
-                            className="h-12 w-12 object-cover rounded border border-border"
+                            className={`h-12 w-12 object-cover rounded border ${
+                              draft.mediaUrls.length >= 2 
+                                ? 'border-purple-300 dark:border-purple-700' 
+                                : 'border-border'
+                            }`}
                           />
+                          {draft.mediaUrls.length >= 2 && (
+                            <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] text-center py-0.5">
+                              {i + 1}
+                            </span>
+                          )}
                           <button
                             onClick={() => removeMediaUrl(i)}
                             className="absolute -top-1 -right-1 h-4 w-4 bg-foreground text-background rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -663,6 +681,26 @@ export default function MessagesPage() {
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  
+                  {/* Carousel Card Body Text - only shown when 2+ images */}
+                  {draft.mediaUrls.length >= 2 && (
+                    <div className="mt-2 p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                      <p className="text-[9px] text-purple-700 dark:text-purple-300 font-medium mb-1.5 flex items-center gap-1">
+                        <Layers className="h-3 w-3" />
+                        Carousel Card Text
+                      </p>
+                      <Input
+                        placeholder="Tap to view details 💕"
+                        value={draft.cardBodyText}
+                        onChange={(e) => setDraft({ cardBodyText: e.target.value })}
+                        className="h-7 text-xs bg-background"
+                        maxLength={160}
+                      />
+                      <p className="text-[8px] text-purple-600/70 dark:text-purple-400/70 mt-1">
+                        Same text shown on all {draft.mediaUrls.length} carousel cards
+                      </p>
                     </div>
                   )}
                 </div>
@@ -896,13 +934,15 @@ export default function MessagesPage() {
                                   className="w-full h-20 object-cover"
                                 />
                                 <div className="px-2 py-1">
-                                  <p className="text-[10px] text-white/80">Card {i + 1}</p>
+                                  <p className="text-[10px] text-white/80 line-clamp-2">
+                                    {draft.cardBodyText || 'Tap to view details 💕'}
+                                  </p>
                                 </div>
                                 <div 
                                   className="mx-1 mb-1 rounded py-1 text-center text-[9px] text-[#00a5f4]"
                                   style={{ backgroundColor: '#1f2c33' }}
                                 >
-                                  View Details
+                                  {draft.buttons[0]?.text?.slice(0, 15) || 'Order Now'}
                                 </div>
                               </div>
                             ))}
@@ -991,12 +1031,41 @@ export default function MessagesPage() {
             onChange={(e) => setTemplateName(e.target.value)}
           />
           
+          {/* Template type indicator */}
+          {draft.mediaUrls.length >= 2 && (
+            <div className="flex items-center gap-2 p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <Layers className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              <div>
+                <p className="text-xs font-medium text-purple-700 dark:text-purple-300">
+                  Carousel Template
+                </p>
+                <p className="text-[10px] text-purple-600/70 dark:text-purple-400/70">
+                  {draft.mediaUrls.length} swipeable product cards
+                </p>
+              </div>
+            </div>
+          )}
+          
+          {draft.mediaUrls.length === 1 && (
+            <div className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+              <ImageIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <div>
+                <p className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                  Image Header Template
+                </p>
+                <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70">
+                  Single header image with message
+                </p>
+              </div>
+            </div>
+          )}
+          
           {/* Workflow hint */}
           <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
             <p><strong>What happens next?</strong></p>
             <p>1. Template is saved locally as a draft</p>
-            <p>2. Click the upload icon to submit for Meta approval</p>
-            <p>3. Once approved, you can send bulk campaigns</p>
+            <p>2. Click the <CloudUpload className="h-3 w-3 inline" /> icon to submit for Meta approval</p>
+            <p>3. Once approved (usually 24-48h), you can send bulk campaigns</p>
           </div>
           
           <div className="flex justify-end gap-2">

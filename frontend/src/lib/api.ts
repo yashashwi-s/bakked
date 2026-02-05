@@ -134,6 +134,7 @@ export async function createLocalTemplate(data: {
   category: string
   media_urls?: string[]
   buttons?: CTAButton[]
+  card_body_text?: string  // For carousel templates - same text on all cards
 }): Promise<Template> {
   return fetchApi<Template>('/local-templates', {
     method: 'POST',
