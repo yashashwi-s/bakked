@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import hashlib
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +60,58 @@ async def health_check():
         "status": "healthy",
         "service": "Bakked WhatsApp Marketing API",
         "version": "1.0.0"
+    }
+
+
+# ==================== DEBUG / META CONFIG CHECK ====================
+@app.get("/debug/meta-config")
+async def debug_meta_config():
+    """
+    Debug endpoint to check Meta API configuration.
+    Returns masked credentials and tests API connectivity.
+    """
+    config_status = {
+        "waba_id": WABA_ID if WABA_ID else "NOT SET",
+        "phone_id": PHONE_ID if PHONE_ID else "NOT SET",
+        "api_version": API_VERSION,
+        "token_set": bool(META_TOKEN),
+        "token_preview": f"{META_TOKEN[:20]}...{META_TOKEN[-10:]}" if META_TOKEN and len(META_TOKEN) > 30 else "NOT SET OR TOO SHORT",
+        "template_url": f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates",
+    }
+    
+    # Test API connectivity
+    api_test = {"status": "not_tested", "error": None, "templates_count": 0}
+    if WABA_ID and META_TOKEN:
+        try:
+            headers = {"Authorization": f"Bearer {META_TOKEN}"}
+            url = f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates?limit=1"
+            res = requests.get(url, headers=headers, timeout=10)
+            res_data = res.json()
+            
+            if "error" in res_data:
+                api_test["status"] = "error"
+                api_test["error"] = res_data["error"].get("message", "Unknown error")
+                api_test["error_code"] = res_data["error"].get("code")
+                api_test["error_type"] = res_data["error"].get("type")
+            else:
+                api_test["status"] = "ok"
+                api_test["templates_count"] = len(res_data.get("data", []))
+                api_test["response_sample"] = res_data.get("data", [])[:1]
+        except Exception as e:
+            api_test["status"] = "exception"
+            api_test["error"] = str(e)
+    
+    return {
+        "config": config_status,
+        "api_test": api_test,
+        "instructions": {
+            "next_steps": [
+                "1. If token_set is false, set WHATSAPP_ACCESS_TOKEN in .env",
+                "2. If api_test.status is 'error', check your access token permissions",
+                "3. If api_test.status is 'ok', you can try submitting a template"
+            ],
+            "test_submit_url": "/local-templates/{template_id}/submit-to-meta"
+        }
     }
 
 
@@ -969,29 +1023,49 @@ async def get_local_templates(category: Optional[str] = None):
 
 # ==================== META TEMPLATE SYNC API ====================
 @app.post("/local-templates/{template_id}/submit-to-meta")
-async def submit_template_to_meta(template_id: str):
+async def submit_template_to_meta(template_id: str, dry_run: bool = False):
     """
-    Submit a local template to Meta for approval (v22.0).
+    Submit a local template to Meta for approval (v24.0).
     Builds the required format with example objects.
+    
+    Query params:
+        dry_run: If true, returns the payload without submitting
     """
+    print(f"\n{'='*50}")
+    print(f"📤 SUBMIT TO META - Template ID: {template_id}")
+    print(f"   Dry run: {dry_run}")
+    print(f"{'='*50}")
+    
     if not WABA_ID or not META_TOKEN:
+        print("❌ Meta API credentials not configured")
         raise HTTPException(status_code=500, detail="Meta API credentials not configured")
+    
+    print(f"✓ WABA_ID: {WABA_ID}")
+    print(f"✓ API Version: {API_VERSION}")
     
     # Get the local template
     template = db.get_template_by_id(template_id)
     if not template:
+        print(f"❌ Template not found: {template_id}")
         raise HTTPException(status_code=404, detail="Template not found")
     
-    # Build Meta API payload (v22.0 format)
+    print(f"✓ Template found: {template.get('name')}")
+    print(f"  - Category: {template.get('category')}")
+    print(f"  - Message: {template.get('message_text', '')[:100]}...")
+    
+    # Build Meta API payload (v24.0 format)
     components = []
     
     # Extract variables from message text ({{1}}, {{2}}, etc.)
-    import re
     variables = re.findall(r'\{\{(\d+)\}\}', template.get("message_text", ""))
     example_values = ["Example"] * len(set(variables)) if variables else []
     
+    print(f"✓ Variables found: {variables}")
+    print(f"✓ Example values: {example_values}")
+    
     # Header (if has media)
     if template.get("media_urls") and len(template["media_urls"]) > 0:
+        print(f"✓ Adding IMAGE header: {template['media_urls'][0][:50]}...")
         components.append({
             "type": "HEADER",
             "format": "IMAGE",
@@ -1042,9 +1116,13 @@ async def submit_template_to_meta(template_id: str):
                 "buttons": meta_buttons[:3]  # Max 3 buttons
             })
     
-    # Create a safe template name (Meta requires lowercase, underscores)
+    # Create a safe template name (Meta requires lowercase, underscores, max 512 chars)
+    # Create a safe template name (Meta requires lowercase, underscores, max 512 chars)
     safe_name = re.sub(r'[^a-z0-9_]', '_', template.get("name", "template").lower())
+    safe_name = re.sub(r'_+', '_', safe_name)  # Remove consecutive underscores
     safe_name = f"bakked_{safe_name}_{template_id[-6:]}"  # Add unique suffix
+    
+    print(f"✓ Safe template name: {safe_name}")
     
     payload = {
         "name": safe_name,
@@ -1053,6 +1131,18 @@ async def submit_template_to_meta(template_id: str):
         "components": components
     }
     
+    print(f"\n📦 PAYLOAD TO META:")
+    print(json.dumps(payload, indent=2))
+    
+    # If dry run, return payload without submitting
+    if dry_run:
+        return {
+            "success": True,
+            "dry_run": True,
+            "payload": payload,
+            "url": f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates"
+        }
+    
     headers = {
         "Authorization": f"Bearer {META_TOKEN}",
         "Content-Type": "application/json"
@@ -1060,11 +1150,17 @@ async def submit_template_to_meta(template_id: str):
     
     try:
         url = f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates"
+        print(f"\n🌐 POST {url}")
+        
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         res_data = res.json()
         
+        print(f"\n📥 RESPONSE (status {res.status_code}):")
+        print(json.dumps(res_data, indent=2))
+        
         if res.status_code == 200 and res_data.get("id"):
             # Update local template with Meta info
+            print(f"\n✅ SUCCESS - Template ID: {res_data['id']}")
             db.update_template_meta_status(
                 template_id=template_id,
                 meta_template_id=res_data["id"],
@@ -1080,12 +1176,23 @@ async def submit_template_to_meta(template_id: str):
         else:
             error_msg = res_data.get("error", {}).get("message", "Unknown error")
             error_code = res_data.get("error", {}).get("code", 0)
+            error_subcode = res_data.get("error", {}).get("error_subcode", 0)
+            error_user_msg = res_data.get("error", {}).get("error_user_msg", "")
+            
+            print(f"\n❌ FAILED - Code: {error_code}, Subcode: {error_subcode}")
+            print(f"   Message: {error_msg}")
+            print(f"   User message: {error_user_msg}")
+            
             return {
                 "success": False,
                 "error": error_msg,
-                "error_code": error_code
+                "error_code": error_code,
+                "error_subcode": error_subcode,
+                "error_user_msg": error_user_msg,
+                "payload_sent": payload
             }
     except Exception as e:
+        print(f"\n💥 EXCEPTION: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
