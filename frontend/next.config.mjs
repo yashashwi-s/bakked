@@ -8,6 +8,18 @@ const nextConfig = {
       },
     ],
   },
+  // Performance optimizations for free tier hosting
+  experimental: {
+    optimizeCss: true,
+  },
+  // Reduce bundle size
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production',
+  },
+  // Enable compression
+  compress: true,
+  // Power optimization for serverless
+  poweredByHeader: false,
 }
 
 export default nextConfig

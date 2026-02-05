@@ -1,11 +1,25 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-// Generic fetch wrapper
+// Simple in-memory cache for GET requests
+const cache = new Map<string, { data: unknown; timestamp: number }>()
+const CACHE_TTL = 30000 // 30 seconds
+
+// Generic fetch wrapper with caching
 async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`
+  const isGet = !options.method || options.method === 'GET'
+  const cacheKey = url
+  
+  // Check cache for GET requests
+  if (isGet) {
+    const cached = cache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached.data as T
+    }
+  }
   
   const response = await fetch(url, {
     ...options,
@@ -20,7 +34,22 @@ async function fetchApi<T>(
     throw new Error(error.detail || error.message || 'API Error')
   }
 
-  return response.json()
+  const data = await response.json()
+  
+  // Cache GET responses
+  if (isGet) {
+    cache.set(cacheKey, { data, timestamp: Date.now() })
+  } else {
+    // Invalidate relevant caches on mutations
+    cache.clear()
+  }
+
+  return data
+}
+
+// Clear cache utility (call after mutations)
+export function invalidateCache() {
+  cache.clear()
 }
 
 // ==================== AUTH ====================

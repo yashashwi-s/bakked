@@ -47,8 +47,8 @@ export default function DashboardPage() {
   const loadData = async () => {
     try {
       // Load all data in parallel
-      const [contacts, logs, campaigns, birthdays, anniversaries, nudge2, nudge15] = await Promise.all([
-        getContacts().catch(() => [] as Contact[]),
+      const [contactsRes, logs, campaigns, birthdays, anniversaries, nudge2, nudge15] = await Promise.all([
+        getContacts(1, 1).catch(() => ({ contacts: [], count: 0 })),
         getMessageLogs(20).catch(() => [] as MessageLog[]),
         getCampaigns(5).catch(() => [] as Campaign[]),
         getGroupMembers('birthday').catch(() => ({ members: [], count: 0 })),
@@ -63,7 +63,7 @@ export default function DashboardPage() {
       const read = logs.filter((l) => l.status === 'read').length
 
       setStats({
-        totalContacts: contacts.length,
+        totalContacts: contactsRes.count || 0,
         todayBirthdays: birthdays.count,
         todayAnniversaries: anniversaries.count,
         nudge2Count: nudge2.count,

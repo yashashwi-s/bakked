@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation'
 import { Input, Button } from '@/components/ui'
 import { isAuthenticated, setSession } from '@/lib/utils'
 
+// Warm up the backend on page load (reduces cold start)
+const warmupBackend = () => {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  fetch(`${apiUrl}/`).catch(() => {}) // Fire and forget
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [password, setPassword] = useState('')
@@ -12,8 +18,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
 
-  // Check if already authenticated
+  // Check if already authenticated + warm up backend
   useEffect(() => {
+    warmupBackend() // Start warming up immediately
+    
     if (isAuthenticated()) {
       router.replace('/dashboard')
     } else {

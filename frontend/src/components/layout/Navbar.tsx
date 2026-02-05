@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
 import { LayoutDashboard, Users, MessageSquare, LogOut } from 'lucide-react'
@@ -15,7 +16,15 @@ const navItems = [
 
 export function Navbar() {
   const pathname = usePathname()
+  const router = useRouter()
   const logout = useAuthStore((state) => state.logout)
+
+  // Prefetch all navigation routes on mount for instant transitions
+  useEffect(() => {
+    navItems.forEach((item) => {
+      router.prefetch(item.href)
+    })
+  }, [router])
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-sm">
