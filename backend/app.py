@@ -904,7 +904,7 @@ async def send_bulk_campaign(payload: BulkCampaignRequest):
 
 # ==================== LOCAL TEMPLATES API ====================
 class CTAButton(BaseModel):
-    type: str  # 'url' or 'phone'
+    type: str  # 'url' or 'phone' or 'quick_reply'
     text: str
     url: Optional[str] = None
     phone: Optional[str] = None
@@ -918,7 +918,7 @@ class LocalTemplateRequest(BaseModel):
 
 @app.post("/local-templates")
 async def create_local_template(template: LocalTemplateRequest):
-    """Save a template locally"""
+    """Save a template locally and optionally submit to Meta for approval"""
     try:
         # Convert buttons to dict list for JSON storage
         buttons_data = [btn.dict() for btn in template.buttons] if template.buttons else []
@@ -945,9 +945,178 @@ async def delete_local_template(template_id: str):
 
 @app.get("/local-templates")
 async def get_local_templates(category: Optional[str] = None):
-    """Get local templates"""
+    """Get local templates with their Meta approval status"""
     templates = db.get_local_templates(category=category)
     return {"templates": templates, "count": len(templates)}
+
+
+# ==================== META TEMPLATE SYNC API ====================
+@app.post("/local-templates/{template_id}/submit-to-meta")
+async def submit_template_to_meta(template_id: str):
+    """
+    Submit a local template to Meta for approval (v22.0).
+    Builds the required format with example objects.
+    """
+    if not WABA_ID or not META_TOKEN:
+        raise HTTPException(status_code=500, detail="Meta API credentials not configured")
+    
+    # Get the local template
+    template = db.get_template_by_id(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # Build Meta API payload (v22.0 format)
+    components = []
+    
+    # Extract variables from message text ({{1}}, {{2}}, etc.)
+    import re
+    variables = re.findall(r'\{\{(\d+)\}\}', template.get("message_text", ""))
+    example_values = ["Example"] * len(set(variables)) if variables else []
+    
+    # Header (if has media)
+    if template.get("media_urls") and len(template["media_urls"]) > 0:
+        components.append({
+            "type": "HEADER",
+            "format": "IMAGE",
+            "example": {"header_handle": [template["media_urls"][0]]}
+        })
+    
+    # Body with example
+    body_component = {
+        "type": "BODY",
+        "text": template.get("message_text", "")
+    }
+    if example_values:
+        body_component["example"] = {"body_text": [example_values]}
+    components.append(body_component)
+    
+    # Buttons (convert to Meta format)
+    buttons = template.get("buttons", [])
+    if buttons:
+        meta_buttons = []
+        for btn in buttons:
+            if btn.get("type") == "url":
+                meta_buttons.append({
+                    "type": "URL",
+                    "text": btn.get("text", "Visit"),
+                    "url": btn.get("url", "https://example.com")
+                })
+            elif btn.get("type") == "phone":
+                meta_buttons.append({
+                    "type": "PHONE_NUMBER",
+                    "text": btn.get("text", "Call"),
+                    "phone_number": btn.get("phone", "+919999999999")
+                })
+            elif btn.get("type") == "quick_reply":
+                meta_buttons.append({
+                    "type": "QUICK_REPLY",
+                    "text": btn.get("text", "Reply")
+                })
+        
+        # Always add opt-out button for marketing (v22.0 best practice)
+        if template.get("category") in ["birthday", "anniversary", "nudge_2", "nudge_15", "festival", "custom"]:
+            has_optout = any("stop" in b.get("text", "").lower() or "opt" in b.get("text", "").lower() for b in meta_buttons)
+            if not has_optout and len(meta_buttons) < 3:
+                meta_buttons.append({"type": "QUICK_REPLY", "text": "Stop Promotions"})
+        
+        if meta_buttons:
+            components.append({
+                "type": "BUTTONS",
+                "buttons": meta_buttons[:3]  # Max 3 buttons
+            })
+    
+    # Create a safe template name (Meta requires lowercase, underscores)
+    safe_name = re.sub(r'[^a-z0-9_]', '_', template.get("name", "template").lower())
+    safe_name = f"bakked_{safe_name}_{template_id[-6:]}"  # Add unique suffix
+    
+    payload = {
+        "name": safe_name,
+        "category": "MARKETING",
+        "language": "en_US",
+        "components": components
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {META_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        url = f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates"
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        res_data = res.json()
+        
+        if res.status_code == 200 and res_data.get("id"):
+            # Update local template with Meta info
+            db.update_template_meta_status(
+                template_id=template_id,
+                meta_template_id=res_data["id"],
+                meta_name=safe_name,
+                meta_status="PENDING"
+            )
+            return {
+                "success": True,
+                "meta_template_id": res_data["id"],
+                "meta_name": safe_name,
+                "status": "PENDING"
+            }
+        else:
+            error_msg = res_data.get("error", {}).get("message", "Unknown error")
+            error_code = res_data.get("error", {}).get("code", 0)
+            return {
+                "success": False,
+                "error": error_msg,
+                "error_code": error_code
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync-meta-templates")
+async def sync_meta_templates():
+    """
+    Fetch all templates from Meta and update local status.
+    Call this periodically or after template submission.
+    """
+    if not WABA_ID or not META_TOKEN:
+        raise HTTPException(status_code=500, detail="Meta API credentials not configured")
+    
+    headers = {"Authorization": f"Bearer {META_TOKEN}"}
+    url = f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates?fields=name,status,category,components,quality_score"
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=30)
+        res_data = res.json()
+        
+        if "data" not in res_data:
+            return {"success": False, "error": res_data.get("error", {}).get("message", "Unknown error")}
+        
+        meta_templates = res_data.get("data", [])
+        updated_count = 0
+        
+        # Update local templates that match Meta templates
+        for meta_tpl in meta_templates:
+            meta_name = meta_tpl.get("name", "")
+            meta_status = meta_tpl.get("status", "UNKNOWN")
+            quality_score = meta_tpl.get("quality_score", {})
+            
+            # Find matching local template by meta_name
+            if meta_name.startswith("bakked_"):
+                updated = db.update_template_status_by_meta_name(
+                    meta_name=meta_name,
+                    meta_status=meta_status,
+                    quality_score=quality_score.get("score") if isinstance(quality_score, dict) else None
+                )
+                if updated:
+                    updated_count += 1
+        
+        return {
+            "success": True,
+            "meta_templates_found": len(meta_templates),
+            "local_updated": updated_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== RUN SERVER ====================

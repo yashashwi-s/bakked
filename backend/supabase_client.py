@@ -237,7 +237,7 @@ class SupabaseDB:
         return len(response.data) > 0 if response.data else False
 
     def get_local_templates(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get local templates"""
+        """Get local templates with Meta status"""
         if not self.client:
             return []
         query = self.client.table("message_templates").select("*").eq("is_active", True)
@@ -245,6 +245,48 @@ class SupabaseDB:
             query = query.eq("category", category)
         response = query.order("created_at", desc=True).execute()
         return response.data or []
+    
+    def get_template_by_id(self, template_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single template by ID"""
+        if not self.client:
+            return None
+        try:
+            response = self.client.table("message_templates").select("*").eq("id", template_id).single().execute()
+            return response.data
+        except:
+            return None
+    
+    def update_template_meta_status(self, template_id: str, meta_template_id: str, 
+                                    meta_name: str, meta_status: str) -> bool:
+        """Update template with Meta API info after submission"""
+        if not self.client:
+            return False
+        try:
+            self.client.table("message_templates").update({
+                "meta_template_id": meta_template_id,
+                "meta_name": meta_name,
+                "meta_status": meta_status
+            }).eq("id", template_id).execute()
+            return True
+        except Exception as e:
+            print(f"Error updating template meta status: {e}")
+            return False
+    
+    def update_template_status_by_meta_name(self, meta_name: str, meta_status: str, 
+                                            quality_score: Optional[str] = None) -> bool:
+        """Update template status by Meta template name (for sync)"""
+        if not self.client:
+            return False
+        try:
+            update_data = {"meta_status": meta_status}
+            if quality_score:
+                update_data["quality_score"] = quality_score
+            
+            response = self.client.table("message_templates").update(update_data).eq("meta_name", meta_name).execute()
+            return len(response.data) > 0 if response.data else False
+        except Exception as e:
+            print(f"Error updating template by meta_name: {e}")
+            return False
 
 
 class SupabaseStorage:

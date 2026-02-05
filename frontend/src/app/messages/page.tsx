@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Navbar } from '@/components/layout'
-import { Button, Input, Textarea, Modal, Toggle } from '@/components/ui'
+import { Button, Input, Textarea, Modal, Toggle, TemplateStatus } from '@/components/ui'
 import { 
   isAuthenticated, formatDate, censorPhone, replacePlaceholders, 
   getTestContact, saveTestContact, getAllGroups, getAllRecipientGroups,
@@ -685,7 +685,10 @@ export default function MessagesPage() {
                       onClick={() => loadTemplateIntoDraft(template)}
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium truncate">{template.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-medium truncate">{template.name}</p>
+                          <TemplateStatus status={template.meta_status} size="sm" />
+                        </div>
                         <p className="text-[10px] text-muted-foreground line-clamp-1">
                           {template.message_text}
                         </p>

@@ -147,6 +147,31 @@ export async function deleteLocalTemplate(id: string): Promise<void> {
   })
 }
 
+// Submit template to Meta for approval
+export async function submitTemplateToMeta(templateId: string): Promise<{
+  success: boolean
+  meta_template_id?: string
+  meta_name?: string
+  status?: string
+  error?: string
+}> {
+  return fetchApi(`/local-templates/${templateId}/submit-to-meta`, {
+    method: 'POST',
+  })
+}
+
+// Sync all templates with Meta to get latest approval status
+export async function syncMetaTemplates(): Promise<{
+  success: boolean
+  meta_templates_found?: number
+  local_updated?: number
+  error?: string
+}> {
+  return fetchApi('/sync-meta-templates', {
+    method: 'POST',
+  })
+}
+
 // ==================== CAMPAIGNS & MESSAGING ====================
 import type { Campaign, CampaignsResponse, SendMessageResponse, BulkSendResponse } from '@/types'
 

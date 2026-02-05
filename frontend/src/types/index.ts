@@ -27,6 +27,11 @@ export interface Template {
   button_url?: string | null
   is_active: boolean
   created_at: string
+  // Meta API v22.0 sync fields
+  meta_template_id?: string | null
+  meta_name?: string | null
+  meta_status?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'PAUSED' | 'DISABLED' | null
+  quality_score?: string | null
 }
 
 // WhatsApp CTA Button (up to 2 per message)
