@@ -225,6 +225,7 @@ async def receive_webhook(request: Request):
     """
     Meta Webhook Handler.
     Receives status updates: sent, delivered, read.
+    Also handles template status updates (APPROVED, REJECTED, etc.)
     """
     try:
         body = await request.json()
@@ -234,8 +235,9 @@ async def receive_webhook(request: Request):
             for entry in body.get("entry", []):
                 for change in entry.get("changes", []):
                     value = change.get("value", {})
+                    field = change.get("field", "")
                     
-                    # Handle status updates
+                    # Handle message status updates
                     for status in value.get("statuses", []):
                         wa_id = status.get("id")
                         new_status = status.get("status")  # sent, delivered, read
@@ -243,6 +245,21 @@ async def receive_webhook(request: Request):
                         if wa_id and new_status:
                             db.update_message_status(wa_id=wa_id, status=new_status)
                             print(f"📨 Status update: {wa_id} → {new_status}")
+                    
+                    # Handle template status updates (message_template_status_update)
+                    if field == "message_template_status_update":
+                        template_name = value.get("message_template_name")
+                        template_status = value.get("event")  # APPROVED, REJECTED, PENDING, etc.
+                        reason = value.get("reason")
+                        
+                        if template_name and template_status:
+                            # Update local template status
+                            updated = db.update_template_status_by_meta_name(
+                                meta_name=template_name,
+                                meta_status=template_status,
+                                quality_score=None
+                            )
+                            print(f"📋 Template status update: {template_name} → {template_status} (reason: {reason})")
         
         return {"status": "ok"}
     
