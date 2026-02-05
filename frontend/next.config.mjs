@@ -8,10 +8,7 @@ const nextConfig = {
       },
     ],
   },
-  // Performance optimizations for free tier hosting
-  experimental: {
-    optimizeCss: true,
-  },
+  // Keep config conservative for serverless builds (avoid optional native deps)
   // Reduce bundle size
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
