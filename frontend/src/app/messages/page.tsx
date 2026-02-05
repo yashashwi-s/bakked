@@ -13,12 +13,12 @@ import {
 import { 
   getLocalTemplates, createLocalTemplate, deleteLocalTemplate, 
   getGroupMembers, getContacts, sendTestMessage, sendBulkCampaign, 
-  uploadMedia, updateContact 
+  uploadMedia, updateContact, submitTemplateToMeta, syncMetaTemplates
 } from '@/lib/api'
 import type { Template, Contact, TestContact, CTAButton, GroupConfig } from '@/types'
 import { PLACEHOLDERS, MAX_IMAGES, MAX_BUTTONS } from '@/lib/constants'
 import { useMessagesStore } from '@/stores/messages'
-import { Trash2, Send, FlaskConical, Save, X, Settings, Search, ExternalLink, Plus, Phone, Pencil, Check } from 'lucide-react'
+import { Trash2, Send, FlaskConical, Save, X, Settings, Search, ExternalLink, Plus, Phone, Pencil, Check, Upload, RefreshCw, CloudUpload, Layers, ImageIcon } from 'lucide-react'
 
 export default function MessagesPage() {
   const router = useRouter()
@@ -189,6 +189,55 @@ export default function MessagesPage() {
     } catch (error) {
       console.error('Failed to delete template:', error)
       toast.error('Failed to delete template')
+    }
+  }
+
+  // Submit a local template to Meta for approval
+  const handleSubmitToMeta = async (template: Template) => {
+    if (!template.id) return
+    
+    // Only allow submission if template is LOCAL or REJECTED
+    if (template.meta_status && !['LOCAL', 'REJECTED'].includes(template.meta_status)) {
+      toast.error(`Template is already ${template.meta_status}`)
+      return
+    }
+    
+    const toastId = toast.loading('Submitting to Meta for approval...')
+    try {
+      const result = await submitTemplateToMeta(template.id)
+      if (result.success) {
+        toast.success(`Template submitted! Status: ${result.status}`, { id: toastId })
+        // Refresh templates to show new status
+        if (selectedGroup) {
+          loadTemplates(selectedGroup)
+        }
+      } else {
+        toast.error(result.error || 'Failed to submit template', { id: toastId })
+        console.error('Meta submission error:', result)
+      }
+    } catch (error) {
+      console.error('Failed to submit to Meta:', error)
+      toast.error('Failed to submit template to Meta', { id: toastId })
+    }
+  }
+
+  // Sync all templates with Meta to get latest approval status
+  const handleSyncMetaStatus = async () => {
+    const toastId = toast.loading('Syncing template status from Meta...')
+    try {
+      const result = await syncMetaTemplates()
+      if (result.success) {
+        toast.success(`Synced! Updated ${result.local_updated || 0} templates`, { id: toastId })
+        // Refresh templates to show updated status
+        if (selectedGroup) {
+          loadTemplates(selectedGroup)
+        }
+      } else {
+        toast.error(result.error || 'Failed to sync', { id: toastId })
+      }
+    } catch (error) {
+      console.error('Failed to sync Meta status:', error)
+      toast.error('Failed to sync template status', { id: toastId })
     }
   }
 
@@ -635,6 +684,7 @@ export default function MessagesPage() {
                     size="sm"
                     onClick={handleSendTest}
                     disabled={!draft.text.trim() || !testContact || sending}
+                    title="Send test to your phone (no approval needed)"
                   >
                     <FlaskConical className="h-3.5 w-3.5 mr-1" />
                     Test
@@ -645,6 +695,7 @@ export default function MessagesPage() {
                     onClick={() => setShowSendConfirmModal(true)}
                     disabled={!draft.text.trim() || !selectedRecipientGroup || recipients.length === 0}
                     className="ml-auto"
+                    title="Send to selected recipients"
                   >
                     <Send className="h-3.5 w-3.5 mr-1" />
                     Send
@@ -662,9 +713,42 @@ export default function MessagesPage() {
           <div className="w-[280px] flex-shrink-0 space-y-4">
             {/* Templates */}
             <div className="border border-border rounded-lg p-3">
-              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
-                Saved Templates
-              </h3>
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Templates
+                </h3>
+                {selectedGroup && templates.length > 0 && (
+                  <button
+                    onClick={handleSyncMetaStatus}
+                    className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+                    title="Refresh status from Meta"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              
+              {/* Legend - only show when there are templates */}
+              {selectedGroup && templates.length > 0 && (
+                <div className="flex flex-wrap items-center gap-3 mb-2 pb-2 border-b border-border">
+                  <div className="flex items-center gap-1" title="Not submitted to Meta">
+                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground"></span>
+                    <span className="text-[9px] text-muted-foreground">Draft</span>
+                  </div>
+                  <div className="flex items-center gap-1" title="Awaiting Meta approval">
+                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span>
+                    <span className="text-[9px] text-muted-foreground">Pending</span>
+                  </div>
+                  <div className="flex items-center gap-1" title="Ready to send">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                    <span className="text-[9px] text-muted-foreground">Ready</span>
+                  </div>
+                  <div className="flex items-center gap-1" title="2-10 images = carousel with swipeable cards">
+                    <Layers className="h-2.5 w-2.5 text-purple-500" />
+                    <span className="text-[9px] text-muted-foreground">Carousel</span>
+                  </div>
+                </div>
+              )}
               
               {!selectedGroup ? (
                 <p className="text-xs text-muted-foreground">Select a group</p>
@@ -675,35 +759,99 @@ export default function MessagesPage() {
                   ))}
                 </div>
               ) : templates.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No templates</p>
+                <div className="text-center py-4">
+                  <p className="text-xs text-muted-foreground">No templates yet</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Write a message and save it as a template
+                  </p>
+                </div>
               ) : (
-                <div className="space-y-1 max-h-[140px] overflow-y-auto">
-                  {templates.map((template) => (
-                    <div
-                      key={template.id}
-                      className="group flex items-start justify-between p-2 rounded hover:bg-muted cursor-pointer"
-                      onClick={() => loadTemplateIntoDraft(template)}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs font-medium truncate">{template.name}</p>
-                          <TemplateStatus status={template.meta_status} size="sm" />
-                        </div>
-                        <p className="text-[10px] text-muted-foreground line-clamp-1">
-                          {template.message_text}
-                        </p>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDeleteTemplate(template.id)
-                        }}
-                        className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                  {templates.map((template) => {
+                    const status = template.meta_status || 'LOCAL'
+                    const isApproved = status === 'APPROVED'
+                    const isPending = status === 'PENDING'
+                    const isRejected = status === 'REJECTED'
+                    const isLocal = status === 'LOCAL'
+                    
+                    return (
+                      <div
+                        key={template.id}
+                        className={`group flex items-start justify-between p-2 rounded hover:bg-muted cursor-pointer transition-colors ${
+                          isPending ? 'border-l-2 border-yellow-400' : 
+                          isApproved ? 'border-l-2 border-green-500' : 
+                          isRejected ? 'border-l-2 border-red-500' : ''
+                        }`}
+                        onClick={() => loadTemplateIntoDraft(template)}
                       >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-medium truncate max-w-[100px]">{template.name}</p>
+                            <TemplateStatus status={template.meta_status} size="sm" showLabel />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground line-clamp-1">
+                            {template.message_text}
+                          </p>
+                          {/* Status-specific hint */}
+                          {isPending && (
+                            <p className="text-[9px] text-yellow-600 dark:text-yellow-400 mt-0.5">
+                              Awaiting Meta approval (24-48h)
+                            </p>
+                          )}
+                          {isRejected && (
+                            <p className="text-[9px] text-red-600 dark:text-red-400 mt-0.5">
+                              Edit and resubmit for approval
+                            </p>
+                          )}
+                          {isLocal && template.media_urls && template.media_urls.length > 0 && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              {template.media_urls.length >= 2 ? (
+                                <>
+                                  <Layers className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+                                  <p className="text-[9px] text-purple-600 dark:text-purple-400 font-medium">
+                                    Carousel: {template.media_urls.length} images
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <ImageIcon className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                                  <p className="text-[9px] text-blue-600 dark:text-blue-400">
+                                    Header image
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* Upload to Meta button - only for LOCAL or REJECTED */}
+                          {(isLocal || isRejected) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleSubmitToMeta(template)
+                              }}
+                              className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded hover:text-blue-600 transition-colors"
+                              title={isRejected ? "Resubmit to Meta" : "Submit to Meta for approval"}
+                            >
+                              <CloudUpload className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {/* Delete button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteTemplate(template.id)
+                            }}
+                            className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded hover:text-red-600 transition-colors"
+                            title="Delete template"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -725,39 +873,56 @@ export default function MessagesPage() {
                 <div className="p-3 min-h-[240px]">
                   {draft.text ? (
                     <div className="flex flex-col items-end">
+                      {/* Carousel Preview - 2+ images */}
+                      {draft.mediaUrls.length >= 2 && (
+                        <div className="w-full mb-2">
+                          <div className="flex items-center gap-1 mb-1">
+                            <Layers className="h-3 w-3 text-purple-400" />
+                            <span className="text-[10px] text-purple-400 font-medium">
+                              Carousel Template • {draft.mediaUrls.length} cards
+                            </span>
+                          </div>
+                          {/* Horizontal scrolling carousel preview */}
+                          <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-thin">
+                            {draft.mediaUrls.map((url, i) => (
+                              <div 
+                                key={i}
+                                className="flex-shrink-0 w-32 rounded-lg overflow-hidden"
+                                style={{ backgroundColor: '#005c4b' }}
+                              >
+                                <img
+                                  src={url}
+                                  alt=""
+                                  className="w-full h-20 object-cover"
+                                />
+                                <div className="px-2 py-1">
+                                  <p className="text-[10px] text-white/80">Card {i + 1}</p>
+                                </div>
+                                <div 
+                                  className="mx-1 mb-1 rounded py-1 text-center text-[9px] text-[#00a5f4]"
+                                  style={{ backgroundColor: '#1f2c33' }}
+                                >
+                                  View Details
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
                       {/* Message Bubble */}
                       <div 
                         className="max-w-[240px] rounded-lg overflow-hidden"
                         style={{ backgroundColor: '#005c4b' }}
                       >
-                        {/* Images Grid */}
-                        {draft.mediaUrls.length > 0 && (
-                          <div className={`grid gap-0.5 ${
-                            draft.mediaUrls.length === 1 ? 'grid-cols-1' : 
-                            draft.mediaUrls.length === 2 ? 'grid-cols-2' :
-                            'grid-cols-2'
-                          }`}>
-                            {draft.mediaUrls.slice(0, 4).map((url, i) => (
-                              <div 
-                                key={i} 
-                                className={`relative ${
-                                  draft.mediaUrls.length === 3 && i === 0 ? 'col-span-2' : ''
-                                }`}
-                              >
-                                <img
-                                  src={url}
-                                  alt=""
-                                  className="w-full h-24 object-cover"
-                                />
-                                {draft.mediaUrls.length > 4 && i === 3 && (
-                                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                                    <span className="text-white text-sm font-medium">
-                                      +{draft.mediaUrls.length - 4}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                        {/* Single Image Header (only when 1 image) */}
+                        {draft.mediaUrls.length === 1 && (
+                          <div className="relative">
+                            <img
+                              src={draft.mediaUrls[0]}
+                              alt=""
+                              className="w-full h-32 object-cover"
+                            />
                           </div>
                         )}
                         
@@ -825,12 +990,21 @@ export default function MessagesPage() {
             value={templateName}
             onChange={(e) => setTemplateName(e.target.value)}
           />
+          
+          {/* Workflow hint */}
+          <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+            <p><strong>What happens next?</strong></p>
+            <p>1. Template is saved locally as a draft</p>
+            <p>2. Click the upload icon to submit for Meta approval</p>
+            <p>3. Once approved, you can send bulk campaigns</p>
+          </div>
+          
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowTemplateModal(false)}>
               Cancel
             </Button>
             <Button onClick={handleSaveTemplate} disabled={!templateName.trim()}>
-              Save
+              Save as Draft
             </Button>
           </div>
         </div>
@@ -981,6 +1155,14 @@ export default function MessagesPage() {
         size="lg"
       >
         <div className="space-y-4">
+          {/* Template status warning */}
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+            <p className="text-xs text-amber-800 dark:text-amber-200">
+              <strong>Note:</strong> For bulk campaigns, templates must be approved by Meta. 
+              Test messages can be sent without approval, but campaigns require an approved template.
+            </p>
+          </div>
+          
           <p className="text-sm">
             Sending to <strong>{recipients.filter((r) => !excludedIds.has(r.id)).length}</strong> recipients
             {testContact && <span className="text-muted-foreground"> (+1 test contact)</span>}

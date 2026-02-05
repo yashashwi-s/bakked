@@ -50,6 +50,75 @@ API_VERSION = os.getenv("WHATSAPP_VERSION", "v22.0")
 WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "bakked_verify_token")
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}/{PHONE_ID}/messages"
 TEMPLATE_URL = f"https://graph.facebook.com/{API_VERSION}/{WABA_ID}/message_templates"
+APP_ID = os.getenv("META_APP_ID", "")  # Meta App ID for resumable upload
+
+
+# ==================== HELPER: Upload image to Meta for template header ====================
+def upload_image_to_meta(image_url: str) -> str | None:
+    """
+    Upload an image to Meta's resumable upload API to get a header_handle.
+    This is required for template headers with images.
+    
+    Returns the header_handle (h:xxxxx) or None if failed.
+    """
+    if not META_TOKEN or not APP_ID:
+        print("⚠️ META_TOKEN or APP_ID not set, cannot upload image to Meta")
+        return None
+    
+    try:
+        # Step 1: Download the image from our storage
+        print(f"📥 Downloading image: {image_url[:60]}...")
+        img_response = requests.get(image_url, timeout=30)
+        if img_response.status_code != 200:
+            print(f"❌ Failed to download image: {img_response.status_code}")
+            return None
+        
+        image_data = img_response.content
+        file_size = len(image_data)
+        content_type = img_response.headers.get('content-type', 'image/jpeg')
+        
+        print(f"✓ Image downloaded: {file_size} bytes, type: {content_type}")
+        
+        # Step 2: Create upload session
+        session_url = f"https://graph.facebook.com/{API_VERSION}/{APP_ID}/uploads"
+        session_params = {
+            "file_length": file_size,
+            "file_type": content_type,
+            "access_token": META_TOKEN
+        }
+        
+        session_response = requests.post(session_url, params=session_params, timeout=30)
+        session_data = session_response.json()
+        
+        if "id" not in session_data:
+            print(f"❌ Failed to create upload session: {session_data}")
+            return None
+        
+        upload_session_id = session_data["id"]
+        print(f"✓ Upload session created: {upload_session_id}")
+        
+        # Step 3: Upload the file
+        upload_url = f"https://graph.facebook.com/{API_VERSION}/{upload_session_id}"
+        upload_headers = {
+            "Authorization": f"OAuth {META_TOKEN}",
+            "file_offset": "0",
+            "Content-Type": content_type
+        }
+        
+        upload_response = requests.post(upload_url, headers=upload_headers, data=image_data, timeout=60)
+        upload_data = upload_response.json()
+        
+        if "h" in upload_data:
+            header_handle = upload_data["h"]
+            print(f"✅ Image uploaded! Handle: {header_handle[:30]}...")
+            return header_handle
+        else:
+            print(f"❌ Upload failed: {upload_data}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Image upload exception: {e}")
+        return None
 
 
 # ==================== HEALTH ====================
@@ -1055,6 +1124,7 @@ async def submit_template_to_meta(template_id: str, dry_run: bool = False):
     
     # Build Meta API payload (v24.0 format)
     components = []
+    has_header_image = False
     
     # Extract variables from message text ({{1}}, {{2}}, etc.)
     variables = re.findall(r'\{\{(\d+)\}\}', template.get("message_text", ""))
@@ -1063,64 +1133,147 @@ async def submit_template_to_meta(template_id: str, dry_run: bool = False):
     print(f"✓ Variables found: {variables}")
     print(f"✓ Example values: {example_values}")
     
-    # Header (if has media)
-    if template.get("media_urls") and len(template["media_urls"]) > 0:
-        print(f"✓ Adding IMAGE header: {template['media_urls'][0][:50]}...")
-        components.append({
-            "type": "HEADER",
-            "format": "IMAGE",
-            "example": {"header_handle": [template["media_urls"][0]]}
-        })
+    media_urls = template.get("media_urls", []) or []
+    num_images = len(media_urls)
+    is_carousel = num_images >= 2  # 2-10 images = carousel template
     
-    # Body with example
-    body_component = {
-        "type": "BODY",
-        "text": template.get("message_text", "")
-    }
-    if example_values:
-        body_component["example"] = {"body_text": [example_values]}
-    components.append(body_component)
+    print(f"✓ Images: {num_images} ({'CAROUSEL' if is_carousel else 'STANDARD'})")
     
-    # Buttons (convert to Meta format)
-    buttons = template.get("buttons", [])
-    if buttons:
-        meta_buttons = []
-        for btn in buttons:
-            if btn.get("type") == "url":
-                meta_buttons.append({
-                    "type": "URL",
-                    "text": btn.get("text", "Visit"),
-                    "url": btn.get("url", "https://example.com")
-                })
-            elif btn.get("type") == "phone":
-                meta_buttons.append({
-                    "type": "PHONE_NUMBER",
-                    "text": btn.get("text", "Call"),
-                    "phone_number": btn.get("phone", "+919999999999")
-                })
-            elif btn.get("type") == "quick_reply":
-                meta_buttons.append({
-                    "type": "QUICK_REPLY",
-                    "text": btn.get("text", "Reply")
-                })
+    if is_carousel and num_images <= 10:
+        # ==================== CAROUSEL TEMPLATE ====================
+        # Carousel requires: BODY (intro text) + CAROUSEL (cards with images)
+        print(f"📦 Building CAROUSEL template with {num_images} cards...")
         
-        # Always add opt-out button for marketing (v22.0 best practice)
-        if template.get("category") in ["birthday", "anniversary", "nudge_2", "nudge_15", "festival", "custom"]:
-            has_optout = any("stop" in b.get("text", "").lower() or "opt" in b.get("text", "").lower() for b in meta_buttons)
-            if not has_optout and len(meta_buttons) < 3:
-                meta_buttons.append({"type": "QUICK_REPLY", "text": "Stop Promotions"})
+        # Body component (intro text shown above carousel)
+        body_component = {
+            "type": "BODY",
+            "text": template.get("message_text", "Check out our collection!")
+        }
+        if example_values:
+            body_component["example"] = {"body_text": [example_values]}
+        components.append(body_component)
         
-        if meta_buttons:
+        # Build carousel cards
+        cards = []
+        for i, image_url in enumerate(media_urls[:10]):  # Max 10 cards
+            print(f"  📤 Uploading image {i+1}/{num_images}...")
+            header_handle = upload_image_to_meta(image_url)
+            
+            if not header_handle:
+                print(f"  ❌ Failed to upload image {i+1}, skipping card")
+                continue
+            
+            # Each card has: HEADER (image), BODY (optional text), BUTTONS
+            card = {
+                "components": [
+                    {
+                        "type": "HEADER",
+                        "format": "IMAGE",
+                        "example": {"header_handle": [header_handle]}
+                    },
+                    {
+                        "type": "BODY",
+                        "text": f"Item {i+1}"  # Placeholder card body
+                    },
+                    {
+                        "type": "BUTTONS",
+                        "buttons": [
+                            {
+                                "type": "QUICK_REPLY",
+                                "text": "View Details"
+                            }
+                        ]
+                    }
+                ]
+            }
+            cards.append(card)
+            print(f"  ✅ Card {i+1} created")
+        
+        if len(cards) >= 2:
+            # Add carousel component
             components.append({
-                "type": "BUTTONS",
-                "buttons": meta_buttons[:3]  # Max 3 buttons
+                "type": "CAROUSEL",
+                "cards": cards
             })
+            print(f"✅ Carousel with {len(cards)} cards ready")
+        else:
+            print(f"⚠️ Not enough cards uploaded ({len(cards)}), falling back to standard")
+            is_carousel = False
+    
+    if not is_carousel:
+        # ==================== STANDARD TEMPLATE ====================
+        # Single image or no image - standard template with optional header
+        
+        # Header image - upload to Meta to get header_handle
+        if num_images > 0:
+            first_image_url = media_urls[0]
+            print(f"📤 Uploading header image to Meta...")
+            
+            header_handle = upload_image_to_meta(first_image_url)
+            
+            if header_handle:
+                components.append({
+                    "type": "HEADER",
+                    "format": "IMAGE",
+                    "example": {"header_handle": [header_handle]}
+                })
+                has_header_image = True
+                print(f"✅ Header image added successfully")
+            else:
+                print(f"⚠️ Image upload failed - submitting as text-only template")
+        
+        # Body with example
+        body_component = {
+            "type": "BODY",
+            "text": template.get("message_text", "")
+        }
+        if example_values:
+            body_component["example"] = {"body_text": [example_values]}
+        components.append(body_component)
+        
+        # Buttons (convert to Meta format)
+        buttons = template.get("buttons", [])
+        if buttons:
+            meta_buttons = []
+            for btn in buttons:
+                if btn.get("type") == "url":
+                    meta_buttons.append({
+                        "type": "URL",
+                        "text": btn.get("text", "Visit"),
+                        "url": btn.get("url", "https://example.com")
+                    })
+                elif btn.get("type") == "phone":
+                    meta_buttons.append({
+                        "type": "PHONE_NUMBER",
+                        "text": btn.get("text", "Call"),
+                        "phone_number": btn.get("phone", "+919999999999")
+                    })
+                elif btn.get("type") == "quick_reply":
+                    meta_buttons.append({
+                        "type": "QUICK_REPLY",
+                        "text": btn.get("text", "Reply")
+                    })
+            
+            # Always add opt-out button for marketing (v22.0 best practice)
+            if template.get("category") in ["birthday", "anniversary", "nudge_2", "nudge_15", "festival", "custom"]:
+                has_optout = any("stop" in b.get("text", "").lower() or "opt" in b.get("text", "").lower() for b in meta_buttons)
+                if not has_optout and len(meta_buttons) < 3:
+                    meta_buttons.append({"type": "QUICK_REPLY", "text": "Stop Promotions"})
+            
+            if meta_buttons:
+                components.append({
+                    "type": "BUTTONS",
+                    "buttons": meta_buttons[:3]  # Max 3 buttons
+                })
     
     # Create a safe template name (Meta requires lowercase, underscores, max 512 chars)
-    # Create a safe template name (Meta requires lowercase, underscores, max 512 chars)
+    # Add timestamp to ensure uniqueness for each submission attempt
+    import time
+    timestamp = int(time.time()) % 100000  # Last 5 digits of timestamp
     safe_name = re.sub(r'[^a-z0-9_]', '_', template.get("name", "template").lower())
     safe_name = re.sub(r'_+', '_', safe_name)  # Remove consecutive underscores
-    safe_name = f"bakked_{safe_name}_{template_id[-6:]}"  # Add unique suffix
+    safe_name = safe_name[:30]  # Truncate to avoid too long names
+    safe_name = f"bakked_{safe_name}_{timestamp}"  # Add timestamp for uniqueness
     
     print(f"✓ Safe template name: {safe_name}")
     
