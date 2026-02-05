@@ -162,7 +162,7 @@ export default function PrivacyPolicyPage() {
               If you have any questions about this Privacy Policy, please contact us:
             </p>
             <ul className="list-none pl-0 space-y-1 text-muted-foreground mt-4">
-              <li>Email: <a href="mailto:chessleg77@gmail.com" className="text-primary hover:underline">privacy@bakked.in</a></li>
+              <li>Email: <a href="mailto:chessleg77@gmail.com" className="text-primary hover:underline">Mail</a></li>
               <li>Business: Bakked</li>
             </ul>
           </section>
